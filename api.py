@@ -9,8 +9,7 @@ from typing import Optional
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
 import quality as quality_service
@@ -553,7 +552,6 @@ def quality_export(
 
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
-LEGACY_DIR = os.path.join(FRONTEND_DIR, 'legacy')
 DIST_DIR = os.path.join(FRONTEND_DIR, 'dist')
 
 if os.path.isdir(DIST_DIR):
@@ -570,9 +568,12 @@ if os.path.isdir(DIST_DIR):
                 return FileResponse(target)
         return FileResponse(index)
 
-if os.path.isdir(LEGACY_DIR):
-    # 迁移共存期：旧静态面板继续服务根路径
-    app.mount('/', StaticFiles(directory=LEGACY_DIR, html=True), name='frontend-legacy')
+
+
+@app.get('/', include_in_schema=False)
+def root_redirect():
+    """根路径重定向到 Vue 应用。"""
+    return RedirectResponse('/app/')
 
 
 if __name__ == '__main__':
