@@ -141,11 +141,14 @@ spider_manager = SpiderManager()
 
 
 def decode_log_bytes(raw):
-    """日志字节解码：UTF-8 优先，失败回退 GBK（兼容早期子进程写入）。"""
-    try:
-        return raw.decode('utf-8')
-    except UnicodeDecodeError:
-        return raw.decode('gbk', errors='replace')
+    """日志字节解码：逐行处理，每行 UTF-8 优先，失败回退 GBK（兼容混合编码文件）。"""
+    decoded = []
+    for line in raw.splitlines():
+        try:
+            decoded.append(line.decode('utf-8'))
+        except UnicodeDecodeError:
+            decoded.append(line.decode('gbk', errors='replace'))
+    return '\n'.join(decoded)
 
 
 def read_log_tail(path, lines=50):
@@ -320,6 +323,23 @@ def get_stats():
         latest_crawl=row['latest_crawl'],
         queue_length=queue_length,
     )
+
+
+@app.get('/api/stats/authors')
+def stats_authors():
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute("""
+                SELECT COALESCE(NULLIF(TRIM(author_name), ''), '未知') AS name, COUNT(*) AS value
+                FROM video_info
+                GROUP BY author_name
+                ORDER BY value DESC
+            """)
+            rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    return {'authors': rows}
 
 
 @app.post('/api/crawl', response_model=CrawlResponse)
