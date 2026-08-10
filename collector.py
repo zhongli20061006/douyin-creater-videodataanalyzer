@@ -1,7 +1,9 @@
-"""一键收集视频 ID：作者主页 URL → 抖音接口 → 视频预览列表。"""
-import re
+"""一键收集视频 ID：作者主页 URL → Playwright 拦截接口 → 视频预览列表。
 
-import requests
+抖音 web 接口对无签名的直接请求返回空 JSON（反爬），因此收集与爬虫一致，
+使用浏览器渲染 + 拦截页面内真实接口响应来获取数据。
+"""
+import re
 
 
 class CollectorError(Exception):
@@ -19,65 +21,75 @@ def build_cookie_header(cookies):
     return '; '.join(f'{k}={v}' for k, v in (cookies or {}).items())
 
 
-def fetch_author_videos(sec_user_id, max_count=50, session=None, cookies=None):
-    """分页拉取作者视频列表，返回预览字段（最多 max_count 条）。"""
-    session = session or requests.Session()
-    headers = {
-        'User-Agent': (
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-            '(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
-        ),
-        'Referer': 'https://www.douyin.com/',
-        'Accept': 'application/json, text/plain, */*',
-    }
-    cookie = build_cookie_header(cookies)
-    if cookie:
-        headers['Cookie'] = cookie
-
+def parse_aweme_list(data):
+    """从拦截到的接口 JSON 中提取视频预览字段。"""
+    aweme_list = data.get('aweme_list') or []
     videos = []
-    max_cursor = 0
-    while len(videos) < max_count:
-        params = {
-            'aid': '6383',
-            'device_platform': 'webapp',
-            'cookie_enabled': 'true',
-            'browser_language': 'zh-CN',
-            'browser_platform': 'Win32',
-            'browser_name': 'Chrome',
-            'browser_version': '130.0.0.0',
-            'sec_user_id': sec_user_id,
-            'max_cursor': max_cursor,
-            'count': 20,
-        }
+    for aweme in aweme_list:
+        videos.append({
+            'video_id': str(aweme.get('aweme_id', '')),
+            'video_title': aweme.get('desc', ''),
+            'like_count': (aweme.get('statistics') or {}).get('digg_count', 0),
+            'author_name': (aweme.get('author') or {}).get('nickname', ''),
+        })
+    return videos
+
+
+def dedupe_videos(videos):
+    """按 video_id 去重（分页滚动可能重复返回）。"""
+    seen = set()
+    result = []
+    for video in videos:
+        if video['video_id'] not in seen:
+            seen.add(video['video_id'])
+            result.append(video)
+    return result
+
+
+def fetch_author_videos_browser(sec_user_id, max_count=50):
+    """用 Playwright 打开作者主页并拦截 aweme/post 接口响应。"""
+    from playwright.sync_api import sync_playwright
+
+    url = f'https://www.douyin.com/user/{sec_user_id}'
+    payloads = []
+    scrolls = max(1, min(5, (max_count + 19) // 20))
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=['--disable-blink-features=AutomationControlled'],
+        )
         try:
-            resp = session.get(
-                'https://www.douyin.com/aweme/v1/web/aweme/post/',
-                params=params,
-                headers=headers,
-                timeout=15,
-            )
-            data = resp.json()
+            page = browser.new_page(viewport={'width': 1280, 'height': 900})
+
+            def handle_response(response):
+                if '/aweme/v1/web/aweme/post/' in response.url:
+                    try:
+                        data = response.json()
+                        if data.get('aweme_list'):
+                            payloads.append(data)
+                    except Exception:
+                        pass
+
+            page.on('response', handle_response)
+            page.goto(url, wait_until='domcontentloaded', timeout=60000)
+            page.wait_for_timeout(4000)
+            for _ in range(scrolls):
+                page.mouse.wheel(0, 3000)
+                page.wait_for_timeout(1500)
         except Exception as e:
-            raise CollectorError(f'请求抖音接口失败: {e}') from e
+            raise CollectorError(f'打开作者主页失败: {e}') from e
+        finally:
+            browser.close()
 
-        if data.get('status_code') != 0:
-            raise CollectorError(f'抖音接口返回错误: {data.get("status_msg", "未知错误")}')
-
-        aweme_list = data.get('aweme_list') or []
-        for aweme in aweme_list:
-            if len(videos) >= max_count:
-                break
-            videos.append({
-                'video_id': str(aweme.get('aweme_id', '')),
-                'video_title': aweme.get('desc', ''),
-                'like_count': (aweme.get('statistics') or {}).get('digg_count', 0),
-                'author_name': (aweme.get('author') or {}).get('nickname', ''),
-            })
-
-        has_more = data.get('has_more', False)
-        max_cursor = data.get('max_cursor', 0)
-        if not has_more or not aweme_list:
-            break
+    videos = dedupe_videos(
+        [v for data in payloads for v in parse_aweme_list(data)]
+    )[:max_count]
+    if not videos:
+        raise CollectorError(
+            '未能获取到作者视频列表：抖音对自动化访问该接口返回空数据（平台风控限制）。'
+            '建议改用「粘贴视频 ID」或「文件导入」方式添加任务。'
+        )
     return videos
 
 
@@ -88,12 +100,7 @@ def collect_author_videos(author_url, max_count=50, session=None, cookies=None):
         raise CollectorError(
             '无法从链接中提取作者主页 ID，请检查链接格式（应形如 https://www.douyin.com/user/xxxx）'
         )
-    videos = fetch_author_videos(
-        sec_user_id,
-        max_count=max_count,
-        session=session,
-        cookies=cookies,
-    )
+    videos = fetch_author_videos_browser(sec_user_id, max_count=max_count)[:max_count]
     return {
         'author_name': videos[0]['author_name'] if videos else '',
         'total': len(videos),

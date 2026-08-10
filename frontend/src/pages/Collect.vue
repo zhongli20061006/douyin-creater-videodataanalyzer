@@ -113,7 +113,10 @@ async function pushToQueue() {
       />
     </el-card>
 
-    <el-empty v-else-if="!loading" description="输入作者主页链接后点击「收集」，可预览视频并加入队列" />
+    <el-empty
+      v-else-if="!loading"
+      description="输入作者主页链接后点击「收集」。注：抖音对自动化访问该接口有限制，若收集失败请改用「粘贴视频 ID」方式"
+    />
   </div>
 </template>
 
