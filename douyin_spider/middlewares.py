@@ -96,6 +96,9 @@ class PlaywrightMiddleware:
             logger.error(f"❌ Playwright 初始化失败: {e}")
             self._init_failed = True
             self.browser = None
+            raise RuntimeError(
+                f"Playwright 浏览器不可用（{e}），请先执行: python -m playwright install chromium"
+            ) from e
 
     def spider_closed(self, spider):
         if self.browser:

@@ -38,3 +38,7 @@ Thumbs.db
 # Environment
 .env
 local_config.py
+
+# Test artifacts
+.pytest_cache/
+pytest-cache-files-*/

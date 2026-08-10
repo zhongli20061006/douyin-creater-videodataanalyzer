@@ -6,6 +6,7 @@ import redis
 import argparse
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
+from playwright.sync_api import sync_playwright
 
 # 避免子进程在 GBK 控制台下打印 emoji/中文时报 UnicodeEncodeError
 if hasattr(sys.stdout, 'reconfigure'):
@@ -16,6 +17,28 @@ if hasattr(sys.stdout, 'reconfigure'):
 os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
 
 from douyin_spider.spiders.douyin_video import DouyinVideoSpider
+
+
+def check_playwright_browser(launcher=None):
+    """检查 Playwright 浏览器是否可用，返回 (可用, 错误信息)。launcher 可注入用于测试。"""
+    launcher = launcher or sync_playwright
+    try:
+        with launcher() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+        return True, ''
+    except Exception as e:
+        return False, str(e)
+
+
+def ensure_playwright_ok(check_func=None):
+    """浏览器不可用时打印中文提示并以状态码 1 退出。"""
+    check_func = check_func or check_playwright_browser
+    ok, err = check_func()
+    if not ok:
+        print(f"❌ Playwright 浏览器不可用（{err}）")
+        print("请先执行: python -m playwright install chromium")
+        sys.exit(1)
 
 
 class DouyinSpiderStarter:
@@ -88,6 +111,7 @@ def main():
 
     if args.mode in ('start', 'both'):
         print("🚀 正在启动分布式爬虫...")
+        ensure_playwright_ok()
         starter.start_spider()
 
 

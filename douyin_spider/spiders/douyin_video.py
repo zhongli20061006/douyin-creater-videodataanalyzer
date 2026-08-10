@@ -184,7 +184,9 @@ class DouyinVideoSpider(scrapy.Spider):
 
         # 原有的 HTML 解析逻辑（RENDER_DATA、正则等）...
         # （此处可以保留之前的提取代码，但优先级低于拦截数据）
-        self.logger.warning("未拦截到API数据，且HTML解析未实现完整字段，入库数据可能不完整")
+        self.logger.warning(
+            f"页面异常，仅保存基础信息: {video_id}（可能已删除/私密，或 Cookie 已失效）"
+        )
         # 简单构建一个只有视频ID和标题的 item
         title = response.css('title::text').get() or ''
         item = DouyinVideoItem()

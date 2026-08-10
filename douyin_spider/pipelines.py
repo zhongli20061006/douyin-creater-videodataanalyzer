@@ -5,6 +5,26 @@ from scrapy.exceptions import DropItem
 
 logger = logging.getLogger(__name__)
 
+
+def build_insert_params(item):
+    """把 item 转成入库参数字典，缺字段时补默认值，避免兜底数据触发 KeyError。"""
+    return {
+        'video_id': item.get('video_id', ''),
+        'video_title': item.get('video_title', ''),
+        'video_desc': item.get('video_desc', ''),
+        'author_name': item.get('author_name', ''),
+        'author_id': item.get('author_id', ''),
+        'publish_time': item.get('publish_time'),
+        'like_count': item.get('like_count', 0),
+        'comment_count': item.get('comment_count', 0),
+        'share_count': item.get('share_count', 0),
+        'play_count': item.get('play_count', 0),
+        'video_url': item.get('video_url', ''),
+        'cover_url': item.get('cover_url', ''),
+        'crawl_time': item.get('crawl_time') or datetime.now(),
+    }
+
+
 class MySQLPipeline:
     def __init__(self, mysql_host, mysql_port, mysql_user, mysql_password, mysql_db):
         self.mysql_host = mysql_host
@@ -74,7 +94,7 @@ class MySQLPipeline:
               """
         try:
             item['crawl_time'] = datetime.now()
-            self.cursor.execute(sql, dict(item))
+            self.cursor.execute(sql, build_insert_params(item))
             self.connection.commit()
             logger.info(f"✅ 数据入库: {item['video_id']}")
             return item
