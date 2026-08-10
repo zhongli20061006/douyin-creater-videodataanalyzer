@@ -49,21 +49,30 @@ class DouyinVideoSpider(scrapy.Spider):
 
     def start_requests(self):
         """
-        手动从 Redis 读取任务，替代 RedisSpider 的内置实现
+        从 Redis 逐条取任务；队列为空则正常结束。
         """
-        batch_size = 50
+        request = self._pop_task()
+        if request is None:
+            self.logger.info("Redis 队列为空，本次没有可爬取的任务")
+            return
+        yield request
+
+    def _pop_task(self):
+        """从 Redis 队首取出一条任务并生成请求；队列为空返回 None。"""
         try:
-            tasks = self.redis_client.lrange(self.redis_key, 0, batch_size - 1)
-            if tasks:
-                self.redis_client.ltrim(self.redis_key, batch_size, -1)
-
-            for data in tasks:
-                request = self.make_request_from_data(data)
-                if request:
-                    yield request
-
+            data = self.redis_client.lpop(self.redis_key)
         except Exception as e:
-            self.logger.error(f"从 Redis 读取任务失败: {e}")
+            self.logger.error(f"从 Redis 取任务失败: {e}")
+            return None
+        if not data:
+            return None
+        return self.make_request_from_data(data)
+
+    def _chain_next(self):
+        """当前请求处理完后取下一条任务，用于接力消费直到队列清空。"""
+        request = self._pop_task()
+        if request:
+            yield request
 
     def make_request_from_data(self, data):
         try:
@@ -162,6 +171,7 @@ class DouyinVideoSpider(scrapy.Spider):
             item = self.parse_video_data(aweme_detail)
             if item:
                 yield item
+                yield from self._chain_next()
                 return
 
         # 降级：检查响应是否为文本类型，再尝试保存和解析
@@ -169,6 +179,7 @@ class DouyinVideoSpider(scrapy.Spider):
             html_text = response.text
         except AttributeError:
             self.logger.error("响应内容不是文本，无法解析")
+            yield from self._chain_next()
             return
 
         # 保存页面
@@ -180,6 +191,7 @@ class DouyinVideoSpider(scrapy.Spider):
         video_id = self.extract_video_id(response)
         if not video_id:
             self.logger.error("无法提取视频 ID，跳过")
+            yield from self._chain_next()
             return
 
         # 原有的 HTML 解析逻辑（RENDER_DATA、正则等）...
@@ -195,6 +207,7 @@ class DouyinVideoSpider(scrapy.Spider):
         item['video_desc'] = title.strip()
         item['video_url'] = response.url
         yield item
+        yield from self._chain_next()
     def parse_count(self, text):
         """将抖音的计数文本转换为整数"""
         if not text:
@@ -277,21 +290,20 @@ class DouyinVideoSpider(scrapy.Spider):
 
             if data.get('status_code') != 0:
                 self.logger.warning(f"API 返回错误: {data.get('status_msg')}")
-                return
-
-            aweme_detail = data.get('aweme_detail', {})
-            if not aweme_detail:
-                self.logger.warning("未获取到视频详情数据")
-                return
-
-            item = self.parse_video_data(aweme_detail)
-            if item:
-                yield item
+            else:
+                aweme_detail = data.get('aweme_detail', {})
+                if not aweme_detail:
+                    self.logger.warning("未获取到视频详情数据")
+                else:
+                    item = self.parse_video_data(aweme_detail)
+                    if item:
+                        yield item
 
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON 解析失败: {e}")
         except Exception as e:
             self.logger.error(f"解析视频详情失败: {e}")
+        yield from self._chain_next()
 
     def parse_video_data(self, aweme_data):
         item = DouyinVideoItem()
@@ -362,7 +374,7 @@ class DouyinVideoSpider(scrapy.Spider):
             item = self.parse_video_data_from_page(json_data)
             if item:
                 yield item
-                return
+        yield from self._chain_next()
     def parse_search_page(self, url, task_data):
         return scrapy.Request(
             url=url,
@@ -383,3 +395,4 @@ class DouyinVideoSpider(scrapy.Spider):
                     yield item
         except Exception as e:
             self.logger.error(f"解析搜索结果失败: {e}")
+        yield from self._chain_next()
