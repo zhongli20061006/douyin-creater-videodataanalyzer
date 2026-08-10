@@ -10,6 +10,7 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import quality as quality_service
@@ -476,8 +477,26 @@ def quality_export(
 
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
-if os.path.isdir(FRONTEND_DIR):
-    app.mount('/', StaticFiles(directory=FRONTEND_DIR, html=True), name='frontend')
+LEGACY_DIR = os.path.join(FRONTEND_DIR, 'legacy')
+DIST_DIR = os.path.join(FRONTEND_DIR, 'dist')
+
+if os.path.isdir(DIST_DIR):
+    # Vue 应用：/app 子路径部署，history 路由刷新由 SPA 兜底
+    app.mount('/app/assets', StaticFiles(directory=os.path.join(DIST_DIR, 'assets')), name='frontend-assets')
+
+    @app.get('/app')
+    @app.get('/app/{full_path:path}')
+    def frontend_spa(full_path: str = ''):
+        index = os.path.join(DIST_DIR, 'index.html')
+        if full_path:
+            target = os.path.abspath(os.path.join(DIST_DIR, full_path))
+            if target.startswith(os.path.abspath(DIST_DIR)) and os.path.isfile(target):
+                return FileResponse(target)
+        return FileResponse(index)
+
+if os.path.isdir(LEGACY_DIR):
+    # 迁移共存期：旧静态面板继续服务根路径
+    app.mount('/', StaticFiles(directory=LEGACY_DIR, html=True), name='frontend-legacy')
 
 
 if __name__ == '__main__':

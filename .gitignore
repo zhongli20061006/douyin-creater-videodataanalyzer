@@ -42,3 +42,11 @@ local_config.py
 # Test artifacts
 .pytest_cache/
 pytest-cache-files-*/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/*.local
+
+# 生成的文档产物（源码 generate_doc.py 保留）
+*.docx
