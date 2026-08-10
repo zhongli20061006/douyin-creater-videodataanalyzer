@@ -102,3 +102,10 @@ def test_should_skip_placeholder_title():
 def test_should_not_skip_normal_record():
     item = DouyinVideoItem(video_id='x', video_title='标题', author_name='作者')
     assert should_skip_item(item) is False
+
+
+def test_build_insert_params_normalizes_title():
+    item = DouyinVideoItem(video_id='1', video_title='  标题 \n第二行 ', video_desc='描述')
+    params = build_insert_params(item)
+    assert params['video_title'] == '标题 第二行'
+    assert params['video_desc'] == '描述'

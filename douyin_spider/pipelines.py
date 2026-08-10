@@ -10,8 +10,8 @@ def build_insert_params(item):
     """把 item 转成入库参数字典，缺字段时补默认值，避免兜底数据触发 KeyError。"""
     return {
         'video_id': item.get('video_id', ''),
-        'video_title': item.get('video_title', ''),
-        'video_desc': item.get('video_desc', ''),
+        'video_title': normalize_title(item.get('video_title')),
+        'video_desc': normalize_title(item.get('video_desc')),
         'author_name': item.get('author_name', ''),
         'author_id': item.get('author_id', ''),
         'publish_time': item.get('publish_time'),
@@ -97,6 +97,8 @@ class MySQLPipeline:
             self.connection.close()
 
     def process_item(self, item, spider):
+        if should_skip_item(item):
+            raise DropItem(f"跳过无效记录（空记录或占位页）: {item.get('video_id', '')}")
         if not self.connection:
             raise DropItem("数据库连接不可用，丢弃 Item")
         upsert_sql = """
