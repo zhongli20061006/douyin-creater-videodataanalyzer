@@ -134,14 +134,27 @@ class SpiderManager:
         }
 
     def get_log(self, lines=50):
-        if not os.path.exists(self.log_path):
-            return []
-        with open(self.log_path, 'r', encoding='utf-8') as f:
-            all_lines = f.readlines()
-            return all_lines[-lines:]
+        return read_log_tail(self.log_path, lines)
 
 
 spider_manager = SpiderManager()
+
+
+def decode_log_bytes(raw):
+    """日志字节解码：UTF-8 优先，失败回退 GBK（兼容早期子进程写入）。"""
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return raw.decode('gbk', errors='replace')
+
+
+def read_log_tail(path, lines=50):
+    """读取日志文件末尾 N 行；兼容混合编码。"""
+    if not os.path.exists(path):
+        return []
+    with open(path, 'rb') as f:
+        raw = f.read()
+    return decode_log_bytes(raw).splitlines()[-lines:]
 
 
 # ── Pydantic Models ──
