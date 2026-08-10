@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 import quality as quality_service
 import collector
+import queue_service
 
 os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
 
@@ -356,6 +357,18 @@ def get_queue_length():
         return {'queue_length': r.llen(REDIS_START_URLS_KEY)}
     except redis.ConnectionError:
         raise HTTPException(status_code=503, detail='Redis 服务不可用')
+
+
+@app.get('/api/queue/items')
+def get_queue_items(limit: int = Query(50, ge=1, le=200)):
+    try:
+        r = get_redis()
+        raws = r.lrange(REDIS_START_URLS_KEY, 0, limit - 1)
+        length = r.llen(REDIS_START_URLS_KEY)
+    except redis.ConnectionError:
+        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    items = [it for it in (queue_service.parse_queue_item(raw) for raw in raws) if it]
+    return {'queue_length': length, 'items': items}
 
 
 # ── Spider Control ──

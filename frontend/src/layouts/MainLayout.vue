@@ -5,6 +5,7 @@ const route = useRoute()
 
 const menus = [
   { index: '/', label: '看板' },
+  { index: '/queue', label: '队列监控' },
   { index: '/videos', label: '视频数据' },
   { index: '/collect', label: '收集任务' },
   { index: '/quality', label: '数据质量' },
