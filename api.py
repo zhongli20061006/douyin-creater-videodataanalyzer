@@ -9,7 +9,10 @@ from typing import Optional
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import Response
 from pydantic import BaseModel
+
+import quality as quality_service
 
 os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
 
@@ -381,6 +384,86 @@ def spider_status():
 @app.get('/api/spider/log')
 def spider_log(lines: int = 50):
     return {'lines': spider_manager.get_log(lines)}
+
+
+class QualityDeleteRequest(BaseModel):
+    video_ids: list[str]
+
+
+@app.get('/api/quality/report')
+def quality_report():
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute('SELECT * FROM video_info')
+            rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    issues = [quality_service.issue_view(r) for r in rows if quality_service.classify_row(r)]
+    return {'summary': quality_service.summarize(rows), 'issues': issues}
+
+
+@app.post('/api/quality/fix')
+def quality_fix():
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute('SELECT video_id, video_title FROM video_info')
+            rows = cursor.fetchall()
+            fixes = quality_service.collect_title_fixes(rows)
+            for video_id, title in fixes:
+                cursor.execute('UPDATE video_info SET video_title = %s WHERE video_id = %s', (title, video_id))
+            db.commit()
+    finally:
+        db_close(db)
+    return {
+        'fixed': len(fixes),
+        'details': [{'video_id': v, 'video_title': t} for v, t in fixes[:20]],
+    }
+
+
+@app.post('/api/quality/delete')
+def quality_delete(req: QualityDeleteRequest):
+    if len(req.video_ids) > quality_service.MAX_DELETE_IDS:
+        raise HTTPException(status_code=400, detail=f'单次最多删除 {quality_service.MAX_DELETE_IDS} 条，请分批操作')
+    db = get_db()
+    try:
+        deleted = 0
+        rejected = []
+        with db.cursor() as cursor:
+            for video_id in req.video_ids:
+                cursor.execute('SELECT * FROM video_info WHERE video_id = %s', (video_id,))
+                row = cursor.fetchone()
+                if not row:
+                    rejected.append({'video_id': video_id, 'reason': '不存在'})
+                    continue
+                if not quality_service.is_deletable(row):
+                    rejected.append({'video_id': video_id, 'reason': '当前数据已不再满足可删规则'})
+                    continue
+                cursor.execute('DELETE FROM video_info WHERE video_id = %s', (video_id,))
+                deleted += 1
+            db.commit()
+    finally:
+        db_close(db)
+    return {'deleted': deleted, 'rejected': rejected}
+
+
+@app.get('/api/quality/export')
+def quality_export(scope: str = Query('all', pattern='^(all|issues)$')):
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute('SELECT * FROM video_info')
+            rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    if scope == 'issues':
+        rows = [r for r in rows if quality_service.classify_row(r)]
+    return Response(
+        content=quality_service.build_csv(rows).encode('utf-8'),
+        media_type='text/csv; charset=utf-8',
+        headers={'Content-Disposition': 'attachment; filename="douyin_data.csv"'},
+    )
 
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
