@@ -107,3 +107,14 @@ def collect_title_fixes(rows):
 def is_deletable(row):
     """删除前按当前库内最新数据重新判定（不依赖报告快照）。"""
     return any(issue in DELETABLE_ISSUES for issue in classify_row(row))
+
+
+def build_csv(rows):
+    """生成带 UTF-8 BOM 的 CSV（标准转义，Excel 直接打开）。"""
+    output = io.StringIO()
+    output.write('\ufeff')
+    writer = csv.DictWriter(output, fieldnames=EXPORT_COLUMNS, extrasaction='ignore')
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({c: ('' if row.get(c) is None else row.get(c)) for c in EXPORT_COLUMNS})
+    return output.getvalue()

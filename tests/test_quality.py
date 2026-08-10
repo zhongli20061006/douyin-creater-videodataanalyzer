@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from quality import (
     STALE_DAYS,
+    build_csv,
     classify_row,
     collect_title_fixes,
     is_deletable,
@@ -89,3 +90,18 @@ def test_is_deletable_uses_current_row_not_report_snapshot():
 def test_is_deletable_true_for_stale_row():
     row = make_row(update_time=datetime.now() - timedelta(days=STALE_DAYS + 1))
     assert is_deletable(row) is True
+
+
+def test_build_csv_escapes_special_characters_and_adds_bom():
+    row = make_row(video_title='标题,带逗号\n换行"引号"')
+    text = build_csv([row])
+    assert text.startswith('\ufeff')
+    assert '"标题,带逗号\n换行""引号"""' in text
+
+
+def test_build_csv_includes_header():
+    text = build_csv([make_row()])
+    header = text.splitlines()[0]
+    assert 'video_id' in header
+    assert 'video_title' in header
+    assert 'update_time' in header
