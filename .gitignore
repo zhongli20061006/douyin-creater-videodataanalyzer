@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# IDE
+.idea/*
+!.idea/runConfigurations/
+.vscode/
+*.swp
+
+# Logs
+*.log
+douyin_spider.log
+backend.log
+spider_output.log
+
+# Runtime
+backend.pid
+
+# Scraped data / debug
+*.html
+!frontend/*.html
+douyinpage*.html
+video_ids.txt
+dump.rdb
+dump.rdb.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+local_config.py

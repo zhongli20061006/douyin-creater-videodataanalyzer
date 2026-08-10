@@ -1,0 +1,8 @@
+mysql -u root -P 3307 -p//登录MySQL
+USE douyin_spider;
+SELECT video_id, video_title, author_name, like_count, comment_count, share_count, crawl_time FROM video_info ORDER BY crawl_time DESC LIMIT 5;//查看数据
+python batch_push.py --file video_ids.txt//推送任务
+python start_spider.py --mode start//启动爬虫
+redis-server//启动Redis
+redis-cli ping//检查Redis是否成功启动
+

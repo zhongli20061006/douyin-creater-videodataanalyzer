@@ -1,0 +1,18 @@
+# 核心依赖
+Scrapy==2.12.0          # 爬虫框架，支持 Python 3.13
+scrapy-redis==0.7.3     # 分布式组件
+redis==5.0.1            # Redis 客户端
+PyMySQL==1.1.0          # MySQL 数据库驱动
+requests==2.31.0        # HTTP 请求库
+fake-useragent==1.4.0   # UA 随机生成
+jsonpath==0.82.2        # JSON 数据解析
+
+# 可选依赖（高并发场景）
+aiohttp==3.9.5          # 异步 HTTP 请求，提升高并发效率
+
+# 数据处理
+pandas==2.2.0           # 数据整理与导出
+
+# Web API & 前端服务
+fastapi==0.115.0        # REST API 框架
+uvicorn==0.30.0         # ASGI 服务器
