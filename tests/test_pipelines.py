@@ -2,7 +2,13 @@
 from datetime import datetime
 
 from douyin_spider.items import DouyinVideoItem
-from douyin_spider.pipelines import build_insert_params, should_insert_ignore
+from douyin_spider.pipelines import (
+    build_insert_params,
+    is_placeholder_title,
+    normalize_title,
+    should_insert_ignore,
+    should_skip_item,
+)
 
 
 def test_build_insert_params_fills_defaults_for_incomplete_item():
@@ -71,3 +77,28 @@ def test_complete_item_should_use_upsert():
     """完整数据继续走 ON DUPLICATE KEY UPDATE 更新。"""
     item = DouyinVideoItem(video_id='x', author_name='a', like_count=1)
     assert should_insert_ignore(item) is False
+
+
+def test_normalize_title_strips_whitespace_and_newlines():
+    assert normalize_title('  标题  \n 第二行  ') == '标题 第二行'
+    assert normalize_title(None) == ''
+
+
+def test_is_placeholder_title_detects_placeholder_marker():
+    assert is_placeholder_title('在抖音记录美好生活20260810 - 抖音') is True
+    assert is_placeholder_title('正常视频标题') is False
+
+
+def test_should_skip_empty_record():
+    item = DouyinVideoItem(video_id='x', video_title='', video_desc='')
+    assert should_skip_item(item) is True
+
+
+def test_should_skip_placeholder_title():
+    item = DouyinVideoItem(video_id='x', video_title='在抖音记录美好生活 - 抖音', author_name='作者')
+    assert should_skip_item(item) is True
+
+
+def test_should_not_skip_normal_record():
+    item = DouyinVideoItem(video_id='x', video_title='标题', author_name='作者')
+    assert should_skip_item(item) is False

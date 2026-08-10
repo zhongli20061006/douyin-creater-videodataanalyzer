@@ -30,6 +30,30 @@ def should_insert_ignore(item):
     return item.get('incomplete') is True
 
 
+PLACEHOLDER_MARKERS = ('在抖音记录美好生活',)
+
+
+def normalize_title(title):
+    """标题规范化：去首尾空白、合并连续空白/换行。"""
+    if title is None:
+        return ''
+    return ' '.join(str(title).split())
+
+
+def is_placeholder_title(title):
+    """占位页标题（无效视频页特征）判断。"""
+    if not title:
+        return False
+    return any(marker in title for marker in PLACEHOLDER_MARKERS)
+
+
+def should_skip_item(item):
+    """标题与作者均为空，或标题为占位页 → 跳过不建行。"""
+    title = (item.get('video_title') or '').strip()
+    author = (item.get('author_name') or '').strip()
+    return (not title and not author) or is_placeholder_title(item.get('video_title'))
+
+
 class MySQLPipeline:
     def __init__(self, mysql_host, mysql_port, mysql_user, mysql_password, mysql_db):
         self.mysql_host = mysql_host
