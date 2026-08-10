@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 from quality import (
     STALE_DAYS,
     classify_row,
+    collect_title_fixes,
+    is_deletable,
     summarize,
 )
 
@@ -65,3 +67,25 @@ def test_summarize_counts():
     assert summary['distinct_video_ids'] == 2
     assert summary['authors'] == 1
     assert summary['issue_counts']['empty'] == 1
+
+
+def test_collect_title_fixes_only_whitespace_changes():
+    rows = [
+        make_row(video_id='1', video_title='  标题 \n第二行 '),
+        make_row(video_id='2'),
+    ]
+    fixes = collect_title_fixes(rows)
+    assert fixes == [('1', '标题 第二行')]
+
+
+def test_is_deletable_uses_current_row_not_report_snapshot():
+    row_empty = make_row(video_title='', author_name='')
+    assert is_deletable(row_empty) is True
+    # 报告生成后该行被补全，删除时应拒绝
+    row_fixed = make_row(video_title='已补全', author_name='作者', like_count=5)
+    assert is_deletable(row_fixed) is False
+
+
+def test_is_deletable_true_for_stale_row():
+    row = make_row(update_time=datetime.now() - timedelta(days=STALE_DAYS + 1))
+    assert is_deletable(row) is True

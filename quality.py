@@ -91,3 +91,19 @@ def issue_view(row):
     view = {f: row.get(f) for f in ISSUE_FIELDS}
     view['issue_types'] = classify_row(row)
     return view
+
+
+def collect_title_fixes(rows):
+    """返回需要修正标题的行：[(video_id, 规范化后标题)]。"""
+    fixes = []
+    for row in rows:
+        raw = row.get('video_title') or ''
+        cleaned = normalize_title(raw)
+        if cleaned != raw:
+            fixes.append((row['video_id'], cleaned))
+    return fixes
+
+
+def is_deletable(row):
+    """删除前按当前库内最新数据重新判定（不依赖报告快照）。"""
+    return any(issue in DELETABLE_ISSUES for issue in classify_row(row))
