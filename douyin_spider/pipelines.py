@@ -25,6 +25,11 @@ def build_insert_params(item):
     }
 
 
+def should_insert_ignore(item):
+    """兜底产生的『不完整』数据只能 INSERT IGNORE，绝不覆盖已有完整记录。"""
+    return item.get('incomplete') is True
+
+
 class MySQLPipeline:
     def __init__(self, mysql_host, mysql_port, mysql_user, mysql_password, mysql_db):
         self.mysql_host = mysql_host
@@ -70,7 +75,7 @@ class MySQLPipeline:
     def process_item(self, item, spider):
         if not self.connection:
             raise DropItem("数据库连接不可用，丢弃 Item")
-        sql = """
+        upsert_sql = """
               INSERT INTO video_info
               (video_id, video_title, video_desc, author_name, author_id,
                publish_time, like_count, comment_count, share_count, play_count,
@@ -92,6 +97,16 @@ class MySQLPipeline:
               VALUES (video_url), cover_url = \
               VALUES (cover_url), update_time = NOW() \
               """
+        insert_ignore_sql = """
+              INSERT IGNORE INTO video_info
+              (video_id, video_title, video_desc, author_name, author_id,
+               publish_time, like_count, comment_count, share_count, play_count,
+               video_url, cover_url, crawl_time)
+              VALUES (%(video_id)s, %(video_title)s, %(video_desc)s, %(author_name)s, %(author_id)s, \
+                      %(publish_time)s, %(like_count)s, %(comment_count)s, %(share_count)s, %(play_count)s, \
+                      %(video_url)s, %(cover_url)s, %(crawl_time)s)
+              """
+        sql = insert_ignore_sql if should_insert_ignore(item) else upsert_sql
         try:
             item['crawl_time'] = datetime.now()
             self.cursor.execute(sql, build_insert_params(item))

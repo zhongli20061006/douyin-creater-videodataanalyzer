@@ -206,6 +206,7 @@ class DouyinVideoSpider(scrapy.Spider):
         item['video_title'] = title.strip()
         item['video_desc'] = title.strip()
         item['video_url'] = response.url
+        item['incomplete'] = True  # 兜底数据标记为不完整，入库时不得覆盖已有完整记录
         yield item
         yield from self._chain_next()
     def parse_count(self, text):

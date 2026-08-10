@@ -30,3 +30,5 @@ class DouyinVideoItem(scrapy.Item):
     cover_url = scrapy.Field()
     # 爬取时间
     crawl_time = scrapy.Field()
+    # 兜底数据标记：页面异常时置 True，入库只 INSERT IGNORE，不覆盖已有完整记录
+    incomplete = scrapy.Field()

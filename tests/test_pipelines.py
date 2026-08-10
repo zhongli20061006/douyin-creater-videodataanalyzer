@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from douyin_spider.items import DouyinVideoItem
-from douyin_spider.pipelines import build_insert_params
+from douyin_spider.pipelines import build_insert_params, should_insert_ignore
 
 
 def test_build_insert_params_fills_defaults_for_incomplete_item():
@@ -59,3 +59,15 @@ def test_build_insert_params_keeps_provided_values():
     assert params['video_url'] == 'u'
     assert params['cover_url'] == 'c'
     assert params['publish_time'] == datetime(2026, 1, 1)
+
+
+def test_incomplete_item_should_use_insert_ignore():
+    """兜底产生的『不完整』数据只能 INSERT IGNORE，不能覆盖已有记录。"""
+    item = DouyinVideoItem(video_id='x', incomplete=True)
+    assert should_insert_ignore(item) is True
+
+
+def test_complete_item_should_use_upsert():
+    """完整数据继续走 ON DUPLICATE KEY UPDATE 更新。"""
+    item = DouyinVideoItem(video_id='x', author_name='a', like_count=1)
+    assert should_insert_ignore(item) is False
