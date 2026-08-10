@@ -449,7 +449,10 @@ def quality_delete(req: QualityDeleteRequest):
 
 
 @app.get('/api/quality/export')
-def quality_export(scope: str = Query('all', pattern='^(all|issues)$')):
+def quality_export(
+    scope: str = Query('all', pattern='^(all|issues)$'),
+    format: str = Query('csv', pattern='^(csv|xlsx)$'),
+):
     db = get_db()
     try:
         with db.cursor() as cursor:
@@ -459,6 +462,12 @@ def quality_export(scope: str = Query('all', pattern='^(all|issues)$')):
         db_close(db)
     if scope == 'issues':
         rows = [r for r in rows if quality_service.classify_row(r)]
+    if format == 'xlsx':
+        return Response(
+            content=quality_service.build_xlsx(rows),
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={'Content-Disposition': 'attachment; filename="douyin_data.xlsx"'},
+        )
     return Response(
         content=quality_service.build_csv(rows).encode('utf-8'),
         media_type='text/csv; charset=utf-8',

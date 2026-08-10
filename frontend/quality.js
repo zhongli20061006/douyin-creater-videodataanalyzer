@@ -116,6 +116,9 @@ document.getElementById('btn-delete').addEventListener('click', function () {
 document.getElementById('btn-export').addEventListener('click', function () {
   window.location.href = '/api/quality/export?scope=all';
 });
+document.getElementById('btn-export-xlsx').addEventListener('click', function () {
+  window.location.href = '/api/quality/export?scope=all&format=xlsx';
+});
 
 document.getElementById('modal-close').addEventListener('click', function () {
   document.getElementById('modal-overlay').style.display = 'none';

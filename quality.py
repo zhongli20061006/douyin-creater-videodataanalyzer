@@ -3,6 +3,8 @@ import csv
 import io
 from datetime import datetime, timedelta
 
+import pandas as pd
+
 STALE_DAYS = 90
 MAX_DELETE_IDS = 200
 PLACEHOLDER_MARKERS = ('在抖音记录美好生活',)
@@ -117,4 +119,13 @@ def build_csv(rows):
     writer.writeheader()
     for row in rows:
         writer.writerow({c: ('' if row.get(c) is None else row.get(c)) for c in EXPORT_COLUMNS})
+    return output.getvalue()
+
+
+def build_xlsx(rows):
+    """生成 xlsx 字节（openpyxl 引擎），列与 CSV 一致。"""
+    data = [{c: ('' if row.get(c) is None else row.get(c)) for c in EXPORT_COLUMNS} for row in rows]
+    df = pd.DataFrame(data, columns=EXPORT_COLUMNS)
+    output = io.BytesIO()
+    df.to_excel(output, index=False, engine='openpyxl')
     return output.getvalue()

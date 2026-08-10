@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from quality import (
     STALE_DAYS,
     build_csv,
+    build_xlsx,
     classify_row,
     collect_title_fixes,
     is_deletable,
@@ -105,3 +106,22 @@ def test_build_csv_includes_header():
     assert 'video_id' in header
     assert 'video_title' in header
     assert 'update_time' in header
+
+
+def test_build_xlsx_returns_valid_workbook():
+    rows = [
+        make_row(video_id='1', video_title='标题,带逗号"引号"'),
+        make_row(video_id='2'),
+    ]
+    content = build_xlsx(rows)
+    assert content[:2] == b'PK'  # xlsx 本质是 zip 包
+
+    import io
+    import openpyxl
+
+    wb = openpyxl.load_workbook(io.BytesIO(content))
+    ws = wb.active
+    assert ws.max_row == 3  # 表头 + 2 行数据
+    assert ws.cell(1, 1).value == 'video_id'
+    assert ws.cell(2, 1).value == '1'
+    assert ws.cell(2, 2).value == '标题,带逗号"引号"'
