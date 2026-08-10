@@ -6,8 +6,9 @@ BOT_NAME = 'douyin_spider'
 SPIDER_MODULES = ['douyin_spider.spiders']
 NEWSPIDER_MODULE = 'douyin_spider.spiders'
 
-# 遵守 robots.txt（建议设置为 True）
-ROBOTSTXT_OBEY = False  # 抖音 robots.txt 限制较严格，开发调试时可关闭
+# 遵守 robots.txt：本项目仅用于学习研究，使用者须自行遵守目标平台条款与法律法规。
+# 抖音 robots.txt 禁止自动采集，开启后将导致无法抓取任何页面，故默认关闭。
+ROBOTSTXT_OBEY = False
 
 # 并发设置
 CONCURRENT_REQUESTS = 16
