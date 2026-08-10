@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import quality as quality_service
+import collector
 
 os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
 
@@ -389,6 +390,35 @@ def spider_log(lines: int = 50):
 
 class QualityDeleteRequest(BaseModel):
     video_ids: list[str]
+
+
+class CollectRequest(BaseModel):
+    author_url: str
+    max_count: int = 50
+
+
+@app.post('/api/collect/author')
+def collect_author(req: CollectRequest):
+    if not req.author_url.strip():
+        raise HTTPException(status_code=400, detail='请输入作者主页链接')
+    if not (1 <= req.max_count <= 100):
+        raise HTTPException(status_code=400, detail='max_count 需在 1-100 之间')
+    try:
+        from scrapy.utils.project import get_project_settings
+        cookies = get_project_settings().getdict('DOUYIN_COOKIES', {}) or {}
+    except Exception:
+        cookies = {}
+    try:
+        result = collector.collect_author_videos(
+            req.author_url.strip(),
+            max_count=req.max_count,
+            cookies=cookies,
+        )
+    except collector.CollectorError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f'收集失败: {e}')
+    return result
 
 
 @app.get('/api/quality/report')
