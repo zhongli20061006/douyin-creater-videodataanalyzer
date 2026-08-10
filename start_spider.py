@@ -1,10 +1,16 @@
 # start_spider.py
 import json
 import os
+import sys
 import redis
 import argparse
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
+
+# 避免子进程在 GBK 控制台下打印 emoji/中文时报 UnicodeEncodeError
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # 强制设置项目环境变量
 os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')

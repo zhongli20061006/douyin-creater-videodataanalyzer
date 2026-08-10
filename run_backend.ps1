@@ -3,6 +3,8 @@ param([int]$Port = 8001)
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PidFile = Join-Path $ProjectRoot "backend.pid"
 $LogFile = Join-Path $ProjectRoot "backend.log"
+$OutLog = Join-Path $ProjectRoot "backend.out.log"
+$ErrLog = Join-Path $ProjectRoot "backend.err.log"
 
 if (Test-Path $PidFile) {
     $oldPid = Get-Content $PidFile -ErrorAction SilentlyContinue
@@ -16,25 +18,27 @@ if (Test-Path $PidFile) {
     Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
 }
 
-$pythonw = Join-Path $ProjectRoot ".venv\Scripts\pythonw.exe"
-if (-not (Test-Path $pythonw)) {
-    $pythonw = Get-Command pythonw.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
-    if (-not $pythonw) {
-        Write-Error "pythonw.exe not found"
+$python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path $python)) {
+    $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+    if (-not $python) {
+        Write-Error "python.exe not found"
         exit 1
     }
 }
 
 Write-Host "Starting backend on port $Port ..."
 
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $pythonw
-$psi.Arguments = "-m uvicorn api:app --host 0.0.0.0 --port $Port"
-$psi.WorkingDirectory = $ProjectRoot
-$psi.UseShellExecute = $false
-$psi.CreateNoWindow = $true
+$env:PYTHONUTF8 = "1"
 
-$proc = [System.Diagnostics.Process]::Start($psi)
+$proc = Start-Process -FilePath $python `
+    -ArgumentList "-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "$Port" `
+    -WorkingDirectory $ProjectRoot `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $OutLog `
+    -RedirectStandardError $ErrLog `
+    -PassThru
+
 $proc.Id | Out-File -FilePath $PidFile -Encoding utf8
 
 $started = Get-Date -Format "yyyy-MM-dd HH:mm:ss"

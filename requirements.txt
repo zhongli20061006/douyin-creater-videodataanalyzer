@@ -16,3 +16,9 @@ pandas==2.2.0           # 数据整理与导出
 # Web API & 前端服务
 fastapi==0.115.0        # REST API 框架
 uvicorn==0.30.0         # ASGI 服务器
+
+# 浏览器渲染（爬虫依赖；安装后需执行: python -m playwright install chromium）
+playwright==1.60.0
+
+# MySQL 驱动（爬虫数据管道使用）
+mysql-connector-python==9.6.0
