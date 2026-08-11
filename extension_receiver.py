@@ -61,3 +61,83 @@ def parse_count(value: Any) -> Optional[int]:
     if number < 0 or number != int(number):
         return None
     return int(number)
+
+
+def normalize_record(raw: dict) -> tuple[Optional[dict], Optional[str]]:
+    """校验并归一化单条记录；返回 (record, None) 或 (None, reason)。
+
+    字段语义：count 字段 None 表示「本批未采集」，upsert 时跳过更新；
+    文本字段 None/缺失 → 空串；publish_time 无效值 → None（不拒绝）。
+    """
+    video_id = raw.get('video_id') or ''
+    video_id = video_id.strip() if isinstance(video_id, str) else ''
+    if not validate_video_id(video_id):
+        return None, 'video_id 必须为 15-20 位数字'
+
+    record: dict[str, Any] = {'video_id': video_id}
+    for field in TEXT_LIMITS:
+        value = raw.get(field)
+        if value is None:
+            record[field] = ''
+        elif isinstance(value, str):
+            cleaned = value.strip()
+            if len(cleaned) > TEXT_LIMITS[field]:
+                return None, f'{field} 长度超限'
+            record[field] = cleaned
+        else:
+            return None, f'{field} 必须是字符串'
+
+    record['publish_time'] = parse_datetime(raw.get('publish_time'))
+
+    for field in COUNT_FIELDS:
+        value = raw.get(field)
+        if value is None:
+            record[field] = None
+            continue
+        parsed = parse_count(value)
+        if parsed is None:
+            return None, f'{field} 必须是非负整数'
+        record[field] = parsed
+
+    for field in ('video_url', 'cover_url'):
+        url = record[field]
+        if url and not HTTP_URL_RE.match(url):
+            return None, f'{field} 必须是 http(s) 链接'
+    return record, None
+
+
+def validate_batch(payload: dict) -> tuple[list[dict], list[dict]]:
+    """整批校验：source_url、长度上限、author 一致性、逐条校验。
+    返回 (valid_records, rejected)；批次级错误以 rejected 单条 reason 表达。
+    """
+    source_url = payload.get('source_url') or ''
+    if not validate_source_url(source_url):
+        return [], [{'video_id': '', 'reason': 'source_url 必须是抖音用户主页链接'}]
+
+    videos = payload.get('videos')
+    if not isinstance(videos, list) or not (1 <= len(videos) <= MAX_BATCH):
+        return [], [{'video_id': '', 'reason': f'videos 必须是 1-{MAX_BATCH} 条'}]
+
+    author_ids = {
+        str(v.get('author_id', '')).strip()
+        for v in videos
+        if isinstance(v, dict) and v.get('author_id')
+    }
+    if len(author_ids) > 1:
+        return [], [{'video_id': '', 'reason': '同一批次所有记录的 author_id 必须一致'}]
+
+    valid: list[dict] = []
+    rejected: list[dict] = []
+    for v in videos:
+        if not isinstance(v, dict):
+            rejected.append({'video_id': '', 'reason': '记录必须是对象'})
+            continue
+        record, reason = normalize_record(v)
+        if record is None:
+            rejected.append({
+                'video_id': str(v.get('video_id', ''))[:64],
+                'reason': reason or '记录校验失败',
+            })
+        else:
+            valid.append(record)
+    return valid, rejected

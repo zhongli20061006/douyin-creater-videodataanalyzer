@@ -3,8 +3,10 @@ from datetime import datetime
 
 from extension_receiver import (
     MAX_BATCH,
+    normalize_record,
     parse_count,
     parse_datetime,
+    validate_batch,
     validate_source_url,
     validate_video_id,
 )
@@ -54,3 +56,90 @@ def test_parse_count_rejects_negative_and_non_numeric():
 
 def test_max_batch_constant():
     assert MAX_BATCH == 100
+
+
+def test_normalize_record_defaults():
+    record, reason = normalize_record({'video_id': '7638884656238410714'})
+    assert reason is None
+    assert record['video_id'] == '7638884656238410714'
+    assert record['video_title'] == ''
+    assert record['author_name'] == ''
+    assert record['publish_time'] is None
+    assert record['like_count'] is None
+    assert record['play_count'] is None
+
+
+def test_normalize_record_strips_and_limits_text():
+    record, _ = normalize_record({
+        'video_id': '7638884656238410714',
+        'video_title': '  标题  ',
+        'author_name': 'a' * 200,
+    })
+    assert record is None
+    record, _ = normalize_record({
+        'video_id': '7638884656238410714',
+        'video_title': '  标题  ',
+    })
+    assert record['video_title'] == '标题'
+
+
+def test_normalize_record_rejects_bad_counts():
+    record, reason = normalize_record({
+        'video_id': '7638884656238410714',
+        'like_count': -5,
+    })
+    assert record is None and reason
+
+
+def test_validate_batch_requires_valid_source_url():
+    payload = {'source_url': 'https://www.douyin.com/video/123', 'videos': []}
+    valid, rejected = validate_batch(payload)
+    assert valid == []
+    assert rejected and rejected[0]['reason']
+
+
+def test_validate_batch_enforces_batch_limit():
+    payload = {
+        'source_url': 'https://www.douyin.com/user/MS4wLjABAAAA123',
+        'videos': [{'video_id': '7638884656238410714'} for _ in range(101)],
+    }
+    valid, rejected = validate_batch(payload)
+    assert valid == []
+    assert rejected[0]['reason']
+
+
+def test_validate_batch_rejects_mixed_authors():
+    payload = {
+        'source_url': 'https://www.douyin.com/user/MS4wLjABAAAA123',
+        'videos': [
+            {'video_id': '7638884656238410714', 'author_id': 'A'},
+            {'video_id': '7638884656238410715', 'author_id': 'B'},
+        ],
+    }
+    valid, rejected = validate_batch(payload)
+    assert valid == []
+    assert any('author_id' in r['reason'] for r in rejected)
+
+
+def test_validate_batch_passes_clean_batch():
+    payload = {
+        'source_url': 'https://www.douyin.com/user/MS4wLjABAAAA123',
+        'videos': [
+            {
+                'video_id': '7638884656238410714',
+                'video_title': '标题A',
+                'like_count': 40000,
+                'author_id': 'A',
+            },
+            {
+                'video_id': '7638884656238410715',
+                'video_title': '标题B',
+                'author_id': 'A',
+            },
+        ],
+    }
+    valid, rejected = validate_batch(payload)
+    assert rejected == []
+    assert len(valid) == 2
+    assert valid[0]['like_count'] == 40000
+    assert valid[1]['like_count'] is None
