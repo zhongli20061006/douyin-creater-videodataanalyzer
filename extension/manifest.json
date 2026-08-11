@@ -12,6 +12,12 @@
   "content_scripts": [
     {
       "matches": ["https://www.douyin.com/*"],
+      "js": ["content/hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.douyin.com/*"],
       "js": ["content/parse.js", "content/collect.js"],
       "run_at": "document_idle"
     }
