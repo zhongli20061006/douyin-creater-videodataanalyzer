@@ -15,6 +15,7 @@ from pydantic import BaseModel
 import quality as quality_service
 import collector
 import queue_service
+import extension_receiver
 
 os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
 
@@ -549,6 +550,35 @@ def quality_export(
         media_type='text/csv; charset=utf-8',
         headers={'Content-Disposition': 'attachment; filename="douyin_data.csv"'},
     )
+
+
+class ExtensionVideosRequest(BaseModel):
+    source_url: str
+    videos: list[dict]
+
+
+@app.post('/api/extension/videos')
+def extension_receive(req: ExtensionVideosRequest):
+    """浏览器插件数据接收器：校验 → 批次内去重 → 部分更新 upsert。"""
+    valid, rejected = extension_receiver.validate_batch(req.model_dump())
+    if not valid and not rejected:
+        raise HTTPException(status_code=400, detail='没有可处理的记录')
+    records = extension_receiver.dedupe_records(valid)
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            for record in records:
+                sql, params = extension_receiver.build_upsert(record)
+                cursor.execute(sql, params)
+            db.commit()
+    finally:
+        db_close(db)
+    return {
+        'source_url': req.source_url,
+        'accepted': len(valid),
+        'upserted': len(records),
+        'rejected': rejected,
+    }
 
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
