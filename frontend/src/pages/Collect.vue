@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import api from '../api'
@@ -12,6 +12,10 @@ interface PreviewVideo {
 }
 
 const activeTab = ref('paste')
+
+watch(activeTab, (tab) => {
+  if (tab === 'idsfile') loadIdsFile()
+})
 
 // ---------- 标签一：粘贴 / 导入（正式入口） ----------
 const rawInput = ref('')
