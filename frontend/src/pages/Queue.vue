@@ -20,6 +20,8 @@ const items = ref<QueueItem[]>([])
 const spider = ref<SpiderStatus | null>(null)
 const logs = ref<string[]>([])
 const loading = ref(false)
+const starting = ref(false)
+const stopping = ref(false)
 let timer: number | null = null
 
 async function load() {
@@ -43,6 +45,32 @@ async function load() {
 function videoId(url: string) {
   const m = url.match(/\/video\/(\d+)/)
   return m ? m[1] : url
+}
+
+async function startSpider() {
+  starting.value = true
+  try {
+    await api.post('/spider/start')
+    ElMessage.success('爬虫已启动')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '启动失败')
+  } finally {
+    starting.value = false
+  }
+}
+
+async function stopSpider() {
+  stopping.value = true
+  try {
+    await api.post('/spider/stop')
+    ElMessage.success('爬虫已停止')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '停止失败')
+  } finally {
+    stopping.value = false
+  }
 }
 
 onMounted(() => {
@@ -74,6 +102,26 @@ onBeforeUnmount(() => {
             <el-tag :type="spider?.running ? 'success' : 'info'">
               {{ spider?.running ? '运行中' : '已停止' }}
             </el-tag>
+          </div>
+          <div class="q-actions">
+            <el-button
+              type="success"
+              size="small"
+              :loading="starting"
+              :disabled="spider?.running"
+              @click="startSpider"
+            >
+              启动爬虫
+            </el-button>
+            <el-button
+              type="danger"
+              size="small"
+              :loading="stopping"
+              :disabled="!spider?.running"
+              @click="stopSpider"
+            >
+              停止爬虫
+            </el-button>
           </div>
         </el-card>
       </el-col>
@@ -129,6 +177,11 @@ onBeforeUnmount(() => {
 .q-value.small {
   font-size: 13px;
   font-weight: 400;
+}
+.q-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
 }
 .q-header {
   display: flex;
