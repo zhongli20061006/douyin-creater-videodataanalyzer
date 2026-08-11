@@ -182,16 +182,19 @@ function fmtTime(t?: string | null) {
 
     <template v-if="data">
       <el-row :gutter="16">
-        <el-col :span="5">
+        <el-col :span="4">
           <StatCard title="视频数" :value="data.summary.total_videos" status="info" />
         </el-col>
-        <el-col :span="5">
+        <el-col :span="4">
+          <StatCard title="总播放" :value="fmtNum(data.summary.total_plays)" status="info" />
+        </el-col>
+        <el-col :span="4">
           <StatCard title="总点赞" :value="fmtNum(data.summary.total_likes)" status="success" />
         </el-col>
-        <el-col :span="5">
+        <el-col :span="4">
           <StatCard title="总评论" :value="fmtNum(data.summary.total_comments)" status="warning" />
         </el-col>
-        <el-col :span="5">
+        <el-col :span="4">
           <StatCard title="总分享" :value="fmtNum(data.summary.total_shares)" status="info" />
         </el-col>
         <el-col :span="4">
