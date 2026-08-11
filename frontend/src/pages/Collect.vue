@@ -128,6 +128,90 @@ async function pushToQueue() {
     pushing.value = false
   }
 }
+
+// ---------- 标签三：video_ids.txt 直接编辑 ----------
+const idsText = ref('')
+const idsCount = ref(0)
+const idsLoading = ref(false)
+const idsSaving = ref(false)
+const idsImporting = ref(false)
+
+async function loadIdsFile() {
+  idsLoading.value = true
+  try {
+    const res = await api.get<{ total: number; video_ids: string[] }>('/extension/ids')
+    idsText.value = (res.data.video_ids ?? []).join('\n')
+    idsCount.value = res.data.total
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '加载失败')
+  } finally {
+    idsLoading.value = false
+  }
+}
+
+function parseIdsText() {
+  const seen = new Set<string>()
+  const valid: string[] = []
+  let invalid = 0
+  for (const raw of idsText.value.split(/\r?\n/)) {
+    const id = raw.trim()
+    if (!id) continue
+    if (/^\d{15,20}$/.test(id) && !seen.has(id)) {
+      seen.add(id)
+      valid.push(id)
+    } else {
+      invalid++
+    }
+  }
+  return { valid, invalid }
+}
+
+async function saveIdsFile() {
+  const { valid, invalid } = parseIdsText()
+  if (!valid.length) {
+    ElMessage.warning('没有合法的视频 ID')
+    return
+  }
+  idsSaving.value = true
+  try {
+    const res = await api.put('/extension/ids', { video_ids: valid, author_id: '' })
+    idsText.value = valid.join('\n')
+    idsCount.value = res.data.total
+    ElMessage.success(
+      `已保存 ${res.data.total} 条` + (invalid ? `，忽略非法行 ${invalid} 条` : ''),
+    )
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '保存失败')
+  } finally {
+    idsSaving.value = false
+  }
+}
+
+async function importIdsFile() {
+  const { valid } = parseIdsText()
+  if (!valid.length) {
+    ElMessage.warning('没有可导入的 ID')
+    return
+  }
+  idsImporting.value = true
+  try {
+    const res = await api.post('/crawl', { video_ids: valid, task_type: 'video' })
+    ElMessage.success(`已导入 ${res.data.pushed} 条，当前队列 ${res.data.queue_length} 条`)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '导入失败')
+  } finally {
+    idsImporting.value = false
+  }
+}
+
+async function copyIdsFile() {
+  try {
+    await navigator.clipboard.writeText(idsText.value)
+    ElMessage.success('已复制全部 ID')
+  } catch {
+    ElMessage.warning('复制失败，请手动选择复制')
+  }
+}
 </script>
 
 <template>
@@ -222,6 +306,35 @@ async function pushToQueue() {
             type="success"
             :title="'当前队列长度: ' + collectQueueLength"
             :closable="false"
+            style="margin-top: 12px"
+          />
+        </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="video_ids.txt" name="idsfile">
+        <el-card shadow="never" class="collect-card">
+          <div class="paste-actions">
+            <span class="ids-count">共 {{ idsCount }} 条</span>
+            <el-button size="small" :loading="idsLoading" @click="loadIdsFile">刷新</el-button>
+            <el-button size="small" type="primary" :loading="idsSaving" :disabled="!idsText.trim()" @click="saveIdsFile">
+              保存到文件
+            </el-button>
+            <el-button size="small" type="success" :loading="idsImporting" :disabled="!idsCount" @click="importIdsFile">
+              导入爬虫队列
+            </el-button>
+            <el-button size="small" :disabled="!idsText" @click="copyIdsFile">复制全部</el-button>
+          </div>
+          <el-input
+            v-model="idsText"
+            type="textarea"
+            :rows="16"
+            placeholder="每行一个视频 ID，可编辑后「保存到文件」覆盖写入 video_ids.txt"
+            style="margin-top: 12px"
+          />
+          <el-alert
+            type="info"
+            :closable="false"
+            title="插件采集会自动去重追加 ID 到该文件；编辑保存会覆盖整个文件；「导入爬虫队列」把全部 ID 送进 Redis 队列供爬虫消费。"
             style="margin-top: 12px"
           />
         </el-card>

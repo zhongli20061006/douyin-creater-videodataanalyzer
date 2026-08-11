@@ -14,6 +14,7 @@ from extension_receiver import (
     validate_batch,
     validate_source_url,
     validate_video_id,
+    write_ids_file,
 )
 
 
@@ -250,3 +251,17 @@ def test_read_ids_file_reads_lines_and_skips_blanks(tmp_path):
 
 def test_read_ids_file_missing_returns_empty(tmp_path):
     assert read_ids_file(str(tmp_path / 'missing.txt')) == []
+
+
+def test_write_ids_file_overwrites(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a\nb\n', encoding='utf-8')
+    assert write_ids_file(str(path), ['x', 'y']) == 2
+    assert path.read_text(encoding='utf-8').splitlines() == ['x', 'y']
+
+
+def test_write_ids_file_empty_clears(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a\nb\n', encoding='utf-8')
+    assert write_ids_file(str(path), []) == 0
+    assert path.read_text(encoding='utf-8') == ''

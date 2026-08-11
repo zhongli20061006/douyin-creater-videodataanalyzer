@@ -10,7 +10,6 @@ const menus = [
   { index: '/collect', label: '收集任务' },
   { index: '/quality', label: '数据质量' },
   { index: '/personal', label: '个人分析' },
-  { index: '/ids', label: '视频ID' },
 ]
 </script>
 

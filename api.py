@@ -617,6 +617,25 @@ def extension_list_ids():
     return {'total': len(ids), 'video_ids': ids}
 
 
+@app.put('/api/extension/ids')
+def extension_replace_ids(req: ExtensionIdsRequest):
+    """前端直接编辑保存：校验后覆盖写入 video_ids.txt（锁 + 原子替换）。"""
+    if len(req.video_ids) > 2000:
+        raise HTTPException(status_code=400, detail='video_ids 数量超限（最多 2000 条）')
+    cleaned: list[str] = []
+    rejected: list[str] = []
+    for vid in req.video_ids:
+        vid = (vid or '').strip()
+        if extension_receiver.validate_video_id(vid):
+            cleaned.append(vid)
+        else:
+            rejected.append(vid)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail='没有合法的 video_id')
+    total = extension_receiver.write_ids_file(VIDEO_IDS_PATH, cleaned)
+    return {'total': total, 'rejected': rejected}
+
+
 @app.get('/api/analyze/authors')
 def analyze_authors():
     """作者下拉数据源：author_id + author_name + 视频数。"""

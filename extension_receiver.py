@@ -281,3 +281,14 @@ def append_ids_file(path: str, new_ids: list[str]) -> tuple[int, int]:
             return len(merged) - len(existing), len(merged)
         finally:
             _unlock_ids_file(fh)
+
+
+def write_ids_file(path: str, ids: list[str]) -> int:
+    """覆盖写入 video_ids.txt（进程锁 + 文件锁 + 原子替换），返回写入条数。"""
+    with _IDS_FILE_LOCK:
+        fh = _lock_ids_file(path)
+        try:
+            _write_ids_atomic(path, ids)
+            return len(ids)
+        finally:
+            _unlock_ids_file(fh)
