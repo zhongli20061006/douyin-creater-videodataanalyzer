@@ -18,14 +18,14 @@ def _as_datetime(value: Any) -> Optional[datetime]:
 
 
 def summarize_rows(rows: list[dict]) -> dict:
-    """按作者过滤后的概览：总数、总和、最近同步时间（MAX(crawl_time)）。"""
+    """按作者过滤后的概览：总数、总和、最近同步时间（MAX(COALESCE(update_time, crawl_time))）。"""
     def total(field: str) -> int:
         return sum(int(r.get(field) or 0) for r in rows)
 
-    crawl_times = [
-        _as_datetime(r.get('crawl_time'))
+    sync_times = [
+        _as_datetime(r.get('update_time') or r.get('crawl_time'))
         for r in rows
-        if r.get('crawl_time')
+        if r.get('update_time') or r.get('crawl_time')
     ]
     return {
         'total_videos': len(rows),
@@ -33,7 +33,7 @@ def summarize_rows(rows: list[dict]) -> dict:
         'total_comments': total('comment_count'),
         'total_shares': total('share_count'),
         'total_plays': total('play_count'),
-        'latest_sync': max(crawl_times) if crawl_times else None,
+        'latest_sync': max(sync_times) if sync_times else None,
     }
 
 

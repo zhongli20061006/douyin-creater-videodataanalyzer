@@ -16,6 +16,7 @@ def make_row(**over):
         'share_count': 5,
         'play_count': 1000,
         'crawl_time': datetime(2026, 8, 10, 17, 7, 59),
+        'update_time': datetime(2026, 8, 10, 17, 7, 59),
     }
     row.update(over)
     return row
@@ -34,12 +35,20 @@ def test_summarize_rows_totals():
     assert summary['total_plays'] == 1200
 
 
-def test_summarize_latest_sync_is_max_crawl_time():
+def test_summarize_latest_sync_uses_max_update_time():
     rows = [
-        make_row(video_id='1', crawl_time=datetime(2026, 1, 1)),
-        make_row(video_id='2', crawl_time=datetime(2026, 8, 10)),
+        make_row(video_id='1', crawl_time=datetime(2026, 1, 1), update_time=datetime(2026, 8, 10)),
+        make_row(video_id='2', crawl_time=datetime(2026, 8, 9), update_time=datetime(2026, 6, 1)),
     ]
     assert summarize_rows(rows)['latest_sync'] == datetime(2026, 8, 10)
+
+
+def test_summarize_latest_sync_falls_back_to_crawl_time_when_update_missing():
+    rows = [
+        make_row(video_id='1', crawl_time=datetime(2026, 3, 1), update_time=None),
+        make_row(video_id='2', crawl_time=datetime(2026, 5, 1), update_time=None),
+    ]
+    assert summarize_rows(rows)['latest_sync'] == datetime(2026, 5, 1)
 
 
 def test_summarize_empty_rows():
