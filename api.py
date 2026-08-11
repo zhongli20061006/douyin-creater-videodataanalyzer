@@ -16,6 +16,7 @@ import quality as quality_service
 import collector
 import queue_service
 import extension_receiver
+import analyzer
 
 os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
 
@@ -578,6 +579,45 @@ def extension_receive(req: ExtensionVideosRequest):
         'accepted': len(valid),
         'upserted': len(records),
         'rejected': rejected,
+    }
+
+
+@app.get('/api/analyze/authors')
+def analyze_authors():
+    """作者下拉数据源：author_id + author_name + 视频数。"""
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute("""
+                SELECT author_id, author_name, COUNT(*) AS count
+                FROM video_info
+                WHERE author_id IS NOT NULL AND author_id <> ''
+                GROUP BY author_id, author_name
+                ORDER BY count DESC
+            """)
+            rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    return {'authors': rows}
+
+
+@app.get('/api/analyze/personal')
+def analyze_personal(author_id: str = Query(..., description='作者 uid')):
+    """按作者聚合个人分析：概览 / 发布趋势 / Top 视频。"""
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute('SELECT * FROM video_info WHERE author_id = %s', (author_id,))
+            rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    author_name = (rows[0].get('author_name') or '') if rows else ''
+    return {
+        'author_id': author_id,
+        'author_name': author_name,
+        'summary': analyzer.summarize_rows(rows),
+        'trend': analyzer.build_trend(rows),
+        'top_videos': analyzer.top_videos(rows),
     }
 
 
