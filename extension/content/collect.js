@@ -223,9 +223,11 @@
     const seen = new Set();
     const collected = [];
     let roundsWithoutNew = 0;
+    let lastScrollHeight = -1;
+    let noGrowRounds = 0;
 
     try {
-      while (seen.size < MAX_VIDEOS && roundsWithoutNew < 3) {
+      while (seen.size < MAX_VIDEOS && roundsWithoutNew < 3 && noGrowRounds < 3) {
         const cards = P.parseProfileCards(root, author);
         let added = 0;
         for (const card of cards) {
@@ -240,9 +242,20 @@
           }
         }
         roundsWithoutNew = added === 0 ? roundsWithoutNew + 1 : 0;
+        const scrollHeight = scroller ? scroller.scrollHeight : document.documentElement.scrollHeight;
+        const scrollTop = scroller ? scroller.scrollTop : window.scrollY;
+        const clientHeight = scroller ? scroller.clientHeight : window.innerHeight;
+        if (scrollHeight === lastScrollHeight) {
+          noGrowRounds += 1;
+        } else {
+          noGrowRounds = 0;
+          lastScrollHeight = scrollHeight;
+        }
         console.log(
           '[dy-analyzer] 一轮: li=', root.querySelectorAll('li').length,
-          'seen=', seen.size, '本轮新增=', added, '无新增轮数=', roundsWithoutNew,
+          'seen=', seen.size, '本轮新增=', added,
+          'scroll=', scrollTop, '/', scrollHeight, '/', clientHeight,
+          '无新增轮=', roundsWithoutNew, '高度不变轮=', noGrowRounds,
         );
         if (seen.size >= MAX_VIDEOS) break;
         if (scroller) {
