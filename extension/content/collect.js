@@ -14,10 +14,12 @@
   const KEY_NICKNAME = 'myNickname';
   const DEFAULT_BACKEND = 'http://127.0.0.1:8001';
   const DETAIL_RETRY_TIMES = 4;
+  const HOOK_EVENT = 'dy-analyzer-data';
 
   let homeButtonAdded = false;
   let detailStarted = false;
   let lastPath = '';
+  const hookMap = new Map();
 
   function normalizeBase(url) {
     let u = String(url || DEFAULT_BACKEND).trim().replace(/\/+$/, '');
@@ -66,6 +68,43 @@
     } catch (e) {
       return null;
     }
+  }
+
+  function handleHookData(json) {
+    const records = P.parseAwemeList(json);
+    for (const r of records) {
+      if (!hookMap.has(r.video_id)) hookMap.set(r.video_id, r);
+    }
+  }
+
+  function setupHookListener() {
+    document.addEventListener(HOOK_EVENT, (e) => {
+      try {
+        const msg = JSON.parse(e.detail || '');
+        if (msg && msg.source === 'dy-analyzer-hook') handleHookData(msg.data);
+      } catch (err) { /* 忽略坏消息 */ }
+    });
+    // 回放缓冲：content script 晚于 hook 注入时补齐第一帧数据
+    const buffered = P.drainHookQueue(document.documentElement);
+    for (const msg of buffered) handleHookData(msg.data);
+  }
+
+  async function reportIds(videoIds, authorId) {
+    const cfg = await getConfig();
+    const resp = await fetch(cfg.backendBaseUrl + '/api/extension/ids', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_ids: videoIds, author_id: authorId }),
+    });
+    if (!resp.ok) {
+      let detail = resp.statusText;
+      try {
+        const err = await resp.json();
+        detail = err.detail || detail;
+      } catch (e) { /* ignore */ }
+      throw new Error(detail);
+    }
+    return resp.json();
   }
 
   /** 主页模式白名单：URL 是 /user/* 且主页主人 uid === 登录账号 uid。 */
@@ -162,6 +201,7 @@
     }
     const cfg = await getConfig();
     const author = { author_name: cfg.myNickname, author_id: cfg.myUid };
+    const scroller = P.findScrollContainer(root, document);
     btn.textContent = '采集中…';
     btn.style.pointerEvents = 'none';
 
@@ -178,13 +218,19 @@
           if (card.sec_uid && card.sec_uid !== cfg.mySecUid) continue;
           if (!seen.has(card.video_id)) {
             seen.add(card.video_id);
-            collected.push(card);
+            // hook 数据优先补全（互动/发布时间），DOM 卡片兜底
+            const merged = P.mergeCardWithHook(card, hookMap.get(card.video_id));
+            collected.push(merged);
             added += 1;
           }
         }
         roundsWithoutNew = added === 0 ? roundsWithoutNew + 1 : 0;
         if (seen.size >= MAX_VIDEOS) break;
-        window.scrollTo(0, document.documentElement.scrollHeight);
+        if (scroller) {
+          scroller.scrollTop = scroller.scrollHeight;
+        } else {
+          window.scrollTo(0, document.documentElement.scrollHeight);
+        }
         await sleep(1500 + Math.random() * 1500);
         await waitForGrowth(root, seen.size);
       }
@@ -208,6 +254,12 @@
         '采集完成' + reason + '：成功 ' + collected.length + ' 条，字段缺失 ' +
         missingCount + ' 处，被拒 ' + rejected.length + ' 条',
       );
+      try {
+        const idsRes = await reportIds([...seen], cfg.myUid);
+        console.log('[dy-analyzer] ids 已保留:', idsRes.added, '新增 /', idsRes.total, '总计');
+      } catch (e) {
+        console.warn('[dy-analyzer] ids 保留失败:', e && e.message ? e.message : e);
+      }
     } catch (e) {
       showToast('采集出错：' + (e && e.message ? e.message : e));
     } finally {
@@ -388,10 +440,12 @@
     document.addEventListener('DOMContentLoaded', () => {
       init();
       watchDetail();
+      setupHookListener();
     });
   } else {
     init();
     watchDetail();
+    setupHookListener();
   }
   setInterval(watchRoute, 800);
 })();
