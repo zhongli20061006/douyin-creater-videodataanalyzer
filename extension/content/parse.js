@@ -161,7 +161,131 @@
     };
   }
 
-  const api = { parseCount, extractSecUidFromHref, parseProfileCards, parseVideoDetail };
+  /** 秒级时间戳 → 本地时间 'YYYY-MM-DD HH:MM:SS'。 */
+  function formatLocalTime(sec) {
+    const d = new Date(Number(sec) * 1000);
+    if (Number.isNaN(d.getTime())) return null;
+    const pad = (n) => String(n).padStart(2, '0');
+    return (
+      d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+      pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds())
+    );
+  }
+
+  /** 解析接口 JSON（aweme_list 或 aweme 详情结构）为记录数组。 */
+  function parseAwemeList(json) {
+    if (!json) return [];
+    let list = [];
+    if (Array.isArray(json.aweme_list)) {
+      list = json.aweme_list;
+    } else if (json.aweme && json.aweme.aweme_id) {
+      list = [json.aweme];
+    }
+    const results = [];
+    for (const aweme of list) {
+      const video_id = String(aweme.aweme_id || '');
+      if (!video_id) continue;
+      const stats = aweme.statistics || {};
+      const missing = [];
+      const title = aweme.desc || '';
+      if (!title) missing.push('video_title');
+
+      const playValue = stats.play_count;
+      const play_count = typeof playValue === 'number' && playValue >= 0 ? playValue : 0;
+      if (typeof playValue !== 'number') missing.push('play_count');
+
+      const numOf = (v, field) => {
+        if (typeof v === 'number' && v >= 0) return v;
+        missing.push(field);
+        return 0;
+      };
+      const like_count = numOf(stats.digg_count, 'like_count');
+      const comment_count = numOf(stats.comment_count, 'comment_count');
+      const share_count = numOf(stats.share_count, 'share_count');
+
+      const author = aweme.author || {};
+      const cover =
+        aweme.video && aweme.video.cover && Array.isArray(aweme.video.cover.url_list)
+          ? aweme.video.cover.url_list[0] || ''
+          : '';
+      if (!cover) missing.push('cover_url');
+
+      results.push({
+        video_id: video_id,
+        video_title: title,
+        video_desc: title,
+        play_count: play_count,
+        like_count: like_count,
+        comment_count: comment_count,
+        share_count: share_count,
+        publish_time: aweme.create_time ? formatLocalTime(aweme.create_time) : null,
+        cover_url: cover,
+        author_name: author.nickname || '',
+        author_id: author.uid ? String(author.uid) : '',
+        sec_uid: author.sec_uid || '',
+        missing_fields: missing,
+      });
+    }
+    return results;
+  }
+
+  /** 从列表容器向上找可滚动祖先（作品列表懒加载容器）。 */
+  function findScrollContainer(root, doc) {
+    let el = root && root.parentElement;
+    while (el && el !== doc.body && el !== doc.documentElement) {
+      if (el.scrollHeight > el.clientHeight + 4) return el;
+      const cs = el.ownerDocument.defaultView.getComputedStyle(el);
+      if (/auto|scroll|overlay/.test(cs.overflowY)) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  /** hook 数据优先补全 DOM 卡片：互动/发布时间以 hook 为准，播放量取较大可信值。 */
+  function mergeCardWithHook(card, hook) {
+    if (!hook) return card;
+    return {
+      video_id: card.video_id,
+      video_title: hook.video_title || card.video_title,
+      video_desc: hook.video_desc || card.video_desc || '',
+      play_count:
+        typeof hook.play_count === 'number' && hook.play_count > 0
+          ? hook.play_count
+          : card.play_count,
+      like_count: hook.like_count,
+      comment_count: hook.comment_count,
+      share_count: hook.share_count,
+      publish_time: hook.publish_time,
+      cover_url: hook.cover_url || card.cover_url,
+      author_name: hook.author_name || card.author_name,
+      author_id: hook.author_id || card.author_id,
+      sec_uid: card.sec_uid || hook.sec_uid || '',
+      missing_fields: hook.missing_fields && hook.missing_fields.length
+        ? hook.missing_fields
+        : card.missing_fields,
+    };
+  }
+
+  /** 回放并清空 hook 缓冲队列（DOM 元素自定义属性，跨 world 共享）。 */
+  function drainHookQueue(rootEl) {
+    const queue = rootEl && Array.isArray(rootEl.__dyAnalyzerQueue)
+      ? rootEl.__dyAnalyzerQueue
+      : [];
+    if (rootEl) rootEl.__dyAnalyzerQueue = [];
+    const messages = [];
+    for (const raw of queue) {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg && msg.source === 'dy-analyzer-hook') messages.push(msg);
+      } catch (e) { /* 忽略坏消息 */ }
+    }
+    return messages;
+  }
+
+  const api = {
+    parseCount, extractSecUidFromHref, parseProfileCards, parseVideoDetail,
+    parseAwemeList, findScrollContainer, mergeCardWithHook, drainHookQueue,
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && !root.DouyinParse) root.DouyinParse = api;
 })(typeof window !== 'undefined' ? window : globalThis);

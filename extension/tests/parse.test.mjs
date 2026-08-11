@@ -9,6 +9,10 @@ const {
   extractSecUidFromHref,
   parseProfileCards,
   parseVideoDetail,
+  parseAwemeList,
+  findScrollContainer,
+  mergeCardWithHook,
+  drainHookQueue,
 } = require('../content/parse.js')
 
 function domOf(html) {
@@ -141,4 +145,106 @@ test('parseVideoDetail 支持主页浮层 modal_id 场景', () => {
   })
   const detail = parseVideoDetail(dom.window.document)
   assert.equal(detail.video_id, '7669345637021002313')
+})
+
+const AWEME_JSON = {
+  aweme_list: [
+    {
+      aweme_id: '7672018085449279859',
+      desc: '标题A #话题',
+      create_time: 1700000000,
+      statistics: {
+        digg_count: 40000,
+        comment_count: 481,
+        share_count: 1150,
+        play_count: 236,
+      },
+      author: { nickname: '黑白阿巴巴', uid: '4358913414407163', sec_uid: 'MS4wLjABAAAA_test' },
+      video: { cover: { url_list: ['https://p3.douyinpic.com/coverA.jpeg'] } },
+    },
+    {
+      aweme_id: '7672018085449279860',
+      desc: '',
+      create_time: null,
+      statistics: {},
+      author: {},
+    },
+  ],
+}
+
+test('parseAwemeList 提取完整字段', () => {
+  const records = parseAwemeList(AWEME_JSON)
+  assert.equal(records.length, 2)
+  const r0 = records[0]
+  assert.equal(r0.video_id, '7672018085449279859')
+  assert.equal(r0.video_title, '标题A #话题')
+  assert.equal(r0.play_count, 236)
+  assert.equal(r0.like_count, 40000)
+  assert.equal(r0.comment_count, 481)
+  assert.equal(r0.share_count, 1150)
+  assert.equal(r0.author_name, '黑白阿巴巴')
+  assert.equal(r0.author_id, '4358913414407163')
+  assert.equal(r0.cover_url, 'https://p3.douyinpic.com/coverA.jpeg')
+  assert.match(r0.publish_time, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+  assert.deepEqual(r0.missing_fields, [])
+})
+
+test('parseAwemeList 容错与详情结构', () => {
+  const r1 = parseAwemeList(AWEME_JSON)[1]
+  assert.equal(r1.play_count, 0)
+  assert.ok(r1.missing_fields.includes('video_title'))
+  assert.ok(r1.missing_fields.includes('play_count'))
+  const detail = parseAwemeList({ aweme: { aweme_id: '123456789012345678', statistics: { play_count: 5 } } })
+  assert.equal(detail.length, 1)
+  assert.equal(detail[0].video_id, '123456789012345678')
+  assert.deepEqual(parseAwemeList({}), [])
+  assert.deepEqual(parseAwemeList(null), [])
+})
+
+test('findScrollContainer 命中 overflow 祖先', () => {
+  const html = `
+  <div id="outer" style="overflow-y:auto;height:600px;">
+    <div id="middle">
+      <div id="list"><ul><li>a</li><li>b</li></ul></div>
+    </div>
+  </div>`
+  const { document } = domOf(html).window
+  const list = document.querySelector('#list')
+  assert.equal(findScrollContainer(list, document), document.querySelector('#outer'))
+})
+
+test('findScrollContainer 无滚动祖先返回 null', () => {
+  const { document } = domOf('<div id="list"><ul><li>a</li></ul></div>').window
+  assert.equal(findScrollContainer(document.querySelector('#list'), document), null)
+})
+
+test('mergeCardWithHook 用 hook 数据补全卡片', () => {
+  const card = {
+    video_id: '1', video_title: 'DOM标题', play_count: 10, cover_url: 'c1',
+    author_name: 'a', author_id: 'u', missing_fields: [],
+  }
+  const hook = {
+    video_id: '1', video_title: 'Hook标题', play_count: 236, like_count: 40000,
+    comment_count: 481, share_count: 1150, publish_time: '2026-05-12 14:13:52',
+    cover_url: 'c2', missing_fields: [],
+  }
+  const merged = mergeCardWithHook(card, hook)
+  assert.equal(merged.video_title, 'Hook标题')
+  assert.equal(merged.play_count, 236)
+  assert.equal(merged.like_count, 40000)
+  assert.equal(merged.publish_time, '2026-05-12 14:13:52')
+  assert.equal(merged.cover_url, 'c2')
+  assert.deepEqual(mergeCardWithHook(card, null), card)
+})
+
+test('drainHookQueue 回放并清空缓冲', () => {
+  const { document } = domOf('<div></div>').window
+  document.documentElement.__dyAnalyzerQueue = [
+    JSON.stringify({ source: 'dy-analyzer-hook', data: { aweme_list: [] } }),
+    'not-json',
+  ]
+  const messages = drainHookQueue(document.documentElement)
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0].source, 'dy-analyzer-hook')
+  assert.equal(document.documentElement.__dyAnalyzerQueue.length, 0)
 })
