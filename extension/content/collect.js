@@ -224,10 +224,15 @@
     return !!document.querySelector('a[href*="/user/' + mySecUid + '"]');
   }
 
+  /** 当前页面是否包含详情数据容器（主页浮层或独立 /video/ 页均适用）。 */
+  function isDetailView() {
+    return !!document.querySelector('[data-e2e="feed-video"]');
+  }
+
   /** 同步当前视频详情；manual=true 时所有失败都给出明确提示（用于手动排查）。 */
   async function maybeCollectDetail(manual) {
-    if (!/^\/video\/\d+/.test(location.pathname)) {
-      if (manual) showToast('当前不是视频详情页');
+    if (!isDetailView()) {
+      if (manual) showToast('当前页面没有详情数据（feed-video）');
       return false;
     }
     const cfg = await getConfig();
@@ -309,8 +314,8 @@
     createDetailButton();
     const attempt = (n) => {
       setTimeout(async () => {
-        if (!/^\/video\/\d+/.test(location.pathname)) return;
-        if (document.querySelector('[data-e2e="feed-video"]')) {
+        if (!isDetailView()) return;
+        if (isDetailView()) {
           await maybeCollectDetail();
         } else if (n < DETAIL_RETRY_TIMES) {
           attempt(n + 1);
@@ -324,7 +329,6 @@
 
   function init() {
     homeButtonAdded = false;
-    detailStarted = false;
     if (isOwnProfile()) {
       const data = readRenderData();
       const info = data && data.app && data.app.user && data.app.user.info;
@@ -348,11 +352,27 @@
           if (addButtonWhenReady()) obs.disconnect();
         }).observe(document.body, { childList: true, subtree: true });
       }
-    } else if (/^\/video\/\d+/.test(location.pathname)) {
-      startDetailMode();
-    } else {
-      removeDetailButton();
     }
+  }
+
+  /** 详情模式常驻监听：检测 feed-video 出现/消失/切换，管理按钮与自动同步。 */
+  function watchDetail() {
+    let lastVid = '';
+    const check = () => {
+      const vidEl = document.querySelector('[data-e2e="feed-video"]');
+      const vid = vidEl ? (vidEl.getAttribute('data-e2e-vid') || '') : '';
+      if (vid && vid !== lastVid) {
+        lastVid = vid;
+        detailStarted = false;
+        startDetailMode();
+      } else if (!vid && lastVid) {
+        lastVid = '';
+        detailStarted = false;
+        removeDetailButton();
+      }
+    };
+    new MutationObserver(check).observe(document.body, { childList: true, subtree: true });
+    check();
   }
 
   /** SPA 路由监听：抖音页面切换可能不刷新页面，轮询 pathname 变化重新初始化。 */
@@ -365,9 +385,13 @@
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', () => {
+      init();
+      watchDetail();
+    });
   } else {
     init();
+    watchDetail();
   }
   setInterval(watchRoute, 800);
 })();

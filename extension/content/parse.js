@@ -103,6 +103,12 @@
       const m = String(url).match(/\/video\/(\d+)/);
       if (m) video_id = m[1];
     }
+    if (!video_id) {
+      // 主页浮层场景：URL 为 /user/self?...&modal_id=<视频ID>
+      const url = root.URL || (root.defaultView && root.defaultView.location.href) || '';
+      const m = String(url).match(/[?&]modal_id=(\d+)/);
+      if (m) video_id = m[1];
+    }
     if (!video_id) return null;
     const missing = [];
 

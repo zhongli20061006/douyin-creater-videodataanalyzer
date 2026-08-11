@@ -129,3 +129,16 @@ test('parseVideoDetail 无 video_id 返回 null', () => {
   const { document } = domOf('<div></div>').window
   assert.equal(parseVideoDetail(document), null)
 })
+
+test('parseVideoDetail 支持主页浮层 modal_id 场景', () => {
+  const html = `
+  <div>
+    <div data-e2e="feed-video"><video poster="https://p3-sign.douyinpic.com/p.jpeg"></video></div>
+    <a href="//www.douyin.com/user/MS4wLjABAAAATTGGMqqjAd_B2UP9s9ThMW5sj0J0Hw4XtLCytt0UOBI">@作者</a>
+  </div>`
+  const dom = new JSDOM(html, {
+    url: 'https://www.douyin.com/user/self?from_tab_name=main&modal_id=7669345637021002313',
+  })
+  const detail = parseVideoDetail(dom.window.document)
+  assert.equal(detail.video_id, '7669345637021002313')
+})
