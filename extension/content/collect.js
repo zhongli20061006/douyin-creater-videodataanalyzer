@@ -13,6 +13,11 @@
   const KEY_SEC_UID = 'mySecUid';
   const KEY_NICKNAME = 'myNickname';
   const DEFAULT_BACKEND = 'http://127.0.0.1:8001';
+  const DETAIL_RETRY_TIMES = 4;
+
+  let homeButtonAdded = false;
+  let detailStarted = false;
+  let lastPath = '';
 
   function normalizeBase(url) {
     let u = String(url || DEFAULT_BACKEND).trim().replace(/\/+$/, '');
@@ -119,6 +124,8 @@
   /* ---------- 主页模式 ---------- */
 
   function createCollectButton() {
+    const old = document.getElementById('dy-analyzer-btn');
+    if (old) old.remove();
     const btn = document.createElement('div');
     btn.id = 'dy-analyzer-btn';
     btn.textContent = '开始采集';
@@ -196,9 +203,10 @@
 
   /* ---------- 详情页模式 ---------- */
 
-  function authorSecUidOfPage() {
-    const link = document.querySelector('a[href*="/user/MS4wLj"]');
-    return link ? P.extractSecUidFromHref(link.getAttribute('href')) : '';
+  /** 页面是否包含指向「当前登录账号」的作者链接（详情页作者区必有一个）。 */
+  function hasSelfAuthorLink(mySecUid) {
+    if (!mySecUid) return false;
+    return !!document.querySelector('a[href*="/user/' + mySecUid + '"]');
   }
 
   async function maybeCollectDetail() {
@@ -208,8 +216,15 @@
       showToast('请先在自己主页点一次「开始采集」，再浏览视频详情页');
       return;
     }
-    if (authorSecUidOfPage() !== cfg.mySecUid) return; // 别人的视频，忽略
-    if (!document.querySelector('[data-e2e="feed-video"]')) return;
+    if (!hasSelfAuthorLink(cfg.mySecUid)) {
+      console.log('[dy-analyzer] 非自己视频，跳过:', location.href);
+      return; // 别人的视频，忽略
+    }
+    const videoEl = document.querySelector('[data-e2e="feed-video"]');
+    if (!videoEl) {
+      console.log('[dy-analyzer] feed-video 未就绪，重试:', location.href);
+      return;
+    }
     const detail = P.parseVideoDetail(document);
     if (!detail) return;
     const key = 'detail_last_' + detail.video_id;
@@ -223,6 +238,7 @@
       });
       const res = await report([payload], 'https://www.douyin.com/user/' + cfg.mySecUid);
       const missing = (detail.missing_fields || []).length;
+      console.log('[dy-analyzer] 详情同步成功:', detail.video_id, 'missing:', detail.missing_fields);
       showToast(
         '已同步该视频详情（' + detail.video_id + '）' +
         (missing ? '，字段缺失 ' + missing + ' 处' : ''),
@@ -234,7 +250,27 @@
 
   /* ---------- 启动（主页模式） ---------- */
 
+  function startDetailMode() {
+    if (detailStarted) return;
+    detailStarted = true;
+    const attempt = (n) => {
+      setTimeout(async () => {
+        if (!/^\/video\/\d+/.test(location.pathname)) return;
+        if (document.querySelector('[data-e2e="feed-video"]')) {
+          await maybeCollectDetail();
+        } else if (n < DETAIL_RETRY_TIMES) {
+          attempt(n + 1);
+        } else {
+          console.log('[dy-analyzer] feed-video 多次未出现，放弃:', location.href);
+        }
+      }, 1200);
+    };
+    attempt(0);
+  }
+
   function init() {
+    homeButtonAdded = false;
+    detailStarted = false;
     if (isOwnProfile()) {
       const data = readRenderData();
       const info = data && data.app && data.app.user && data.app.user.info;
@@ -259,22 +295,16 @@
         }).observe(document.body, { childList: true, subtree: true });
       }
     } else if (/^\/video\/\d+/.test(location.pathname)) {
-      let started = false;
-      const tryStart = () => {
-        if (started) return;
-        started = true;
-        setTimeout(maybeCollectDetail, 1200);
-      };
-      if (document.querySelector('[data-e2e="feed-video"]')) {
-        tryStart();
-      } else {
-        new MutationObserver((_, obs) => {
-          if (document.querySelector('[data-e2e="feed-video"]')) {
-            tryStart();
-            obs.disconnect();
-          }
-        }).observe(document.body, { childList: true, subtree: true });
-      }
+      startDetailMode();
+    }
+  }
+
+  /** SPA 路由监听：抖音页面切换可能不刷新页面，轮询 pathname 变化重新初始化。 */
+  function watchRoute() {
+    const now = location.pathname;
+    if (now !== lastPath) {
+      lastPath = now;
+      init();
     }
   }
 
@@ -283,4 +313,5 @@
   } else {
     init();
   }
+  setInterval(watchRoute, 800);
 })();
