@@ -276,8 +276,17 @@
         const batch = collected.slice(i, i + BATCH_SIZE);
         try {
           const res = await report(batch, 'https://www.douyin.com/user/' + cfg.mySecUid);
-          for (const r of res.rejected || []) rejected.push(r);
+          console.log(
+            '[dy-analyzer] 批次上报: batch=', batch.length,
+            'accepted=', res.accepted, 'upserted=', res.upserted,
+            'rejected=', (res.rejected || []).length,
+          );
+          for (const r of res.rejected || []) {
+            rejected.push(r);
+            if (rejected.length <= 3) console.log('[dy-analyzer] 拒绝原因:', r);
+          }
         } catch (e) {
+          console.warn('[dy-analyzer] 批次上报异常:', e && e.message ? e.message : e);
           rejected.push({ video_id: 'batch' + i, reason: String(e.message || e) });
         }
       }
