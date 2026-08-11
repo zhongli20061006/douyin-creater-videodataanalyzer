@@ -12,6 +12,7 @@
   const KEY_UID = 'myUid';
   const KEY_SEC_UID = 'mySecUid';
   const KEY_NICKNAME = 'myNickname';
+  const KEY_MODE = 'complianceMode';
   const DEFAULT_BACKEND = 'http://127.0.0.1:8001';
   const DETAIL_RETRY_TIMES = 4;
   const HOOK_EVENT = 'dy-analyzer-data';
@@ -20,6 +21,7 @@
   let detailStarted = false;
   let lastPath = '';
   const hookMap = new Map();
+  let complianceLimited = false;
 
   function normalizeBase(url) {
     let u = String(url || DEFAULT_BACKEND).trim().replace(/\/+$/, '');
@@ -51,12 +53,13 @@
   }
 
   async function getConfig() {
-    const data = await storageGet([KEY_BACKEND, KEY_UID, KEY_SEC_UID, KEY_NICKNAME]);
+    const data = await storageGet([KEY_BACKEND, KEY_UID, KEY_SEC_UID, KEY_NICKNAME, KEY_MODE]);
     return {
       backendBaseUrl: normalizeBase(data[KEY_BACKEND]),
       myUid: data[KEY_UID] || '',
       mySecUid: data[KEY_SEC_UID] || '',
       myNickname: data[KEY_NICKNAME] || '',
+      complianceMode: data[KEY_MODE] || 'unlimited',
     };
   }
 
@@ -107,9 +110,10 @@
     return resp.json();
   }
 
-  /** 主页模式白名单：URL 是 /user/* 且主页主人 uid === 登录账号 uid。 */
-  function isOwnProfile() {
+  /** 主页模式判定：limited 模式要求主页主人 uid === 登录账号 uid；unlimited 任意用户主页。 */
+  function isOwnProfile(limited) {
     if (!/^\/user\//.test(location.pathname)) return false;
+    if (!limited) return true; // 无限制模式：任意用户主页可采集
     const data = readRenderData();
     if (!data || !data.app || !data.app.user || !data.app.odin) return false;
     const user = data.app.user;
@@ -198,12 +202,6 @@
   }
 
   async function collectProfile() {
-    // 强校验：只能在当前登录账号自己的主页采集（防 SPA 切换后的残留按钮）
-    if (!isOwnProfile()) {
-      removeCollectButton();
-      showToast('只能在自己主页采集');
-      return;
-    }
     const btn = document.getElementById('dy-analyzer-btn');
     const root = document.querySelector('[data-e2e="user-post-list"]');
     if (!root) {
@@ -231,8 +229,8 @@
         const cards = P.parseProfileCards(root, author);
         let added = 0;
         for (const card of cards) {
-          // 防页面篡改：卡片链接里的 secUid 必须与当前登录账号一致
-          if (card.sec_uid && card.sec_uid !== cfg.mySecUid) continue;
+          // limited 模式防页面篡改：卡片链接里的 secUid 必须与当前登录账号一致
+          if (complianceLimited && card.sec_uid && card.sec_uid !== cfg.mySecUid) continue;
           if (!seen.has(card.video_id)) {
             seen.add(card.video_id);
             // hook 数据优先补全（互动/发布时间），DOM 卡片兜底
@@ -402,33 +400,33 @@
 
   function init() {
     homeButtonAdded = false;
-    if (isOwnProfile()) {
-      const data = readRenderData();
-      const info = data && data.app && data.app.user && data.app.user.info;
-      if (info) {
-        // 始终以当前自己主页的身份为准，覆盖可能变化的缓存
-        storageSet({
-          [KEY_UID]: info.uid,
-          [KEY_SEC_UID]: info.secUid,
-          [KEY_NICKNAME]: info.nickname,
-        });
-      }
-      const addButtonWhenReady = () => {
-        if (document.querySelector('[data-e2e="user-post-list"]')) {
-          createCollectButton();
-          return true;
+    getConfig().then((cfg) => {
+      complianceLimited = cfg.complianceMode === 'limited';
+      if (isOwnProfile(complianceLimited)) {
+        const data = readRenderData();
+        const info = data && data.app && data.app.user && data.app.user.info;
+        if (info) {
+          // 以当前主页主人的身份为准，覆盖可能变化的缓存
+          storageSet({
+            [KEY_UID]: info.uid,
+            [KEY_SEC_UID]: info.secUid,
+            [KEY_NICKNAME]: info.nickname,
+          });
         }
-        return false;
-      };
-      if (!addButtonWhenReady()) {
-        new MutationObserver((_, obs) => {
-          if (addButtonWhenReady()) obs.disconnect();
-        }).observe(document.body, { childList: true, subtree: true });
+        const addButtonWhenReady = () => {
+          if (document.querySelector('[data-e2e="user-post-list"]')) {
+            createCollectButton();
+            return true;
+          }
+          return false;
+        };
+        if (!addButtonWhenReady()) {
+          new MutationObserver((_, obs) => {
+            if (addButtonWhenReady()) obs.disconnect();
+          }).observe(document.body, { childList: true, subtree: true });
+        }
       }
-    } else {
-      // SPA 切换到他人主页/其它页面时移除残留按钮
-      removeCollectButton();
-    }
+    });
   }
 
   /** 详情模式常驻监听：检测 feed-video 出现/消失/切换，管理按钮与自动同步。 */
