@@ -148,6 +148,9 @@ onMounted(load)
         <el-table-column label="点赞" width="90">
           <template #default="{ row }">{{ fmtNum(row.like_count) }}</template>
         </el-table-column>
+        <el-table-column label="播放" width="100">
+          <template #default="{ row }">{{ fmtNum(row.play_count) }}</template>
+        </el-table-column>
         <el-table-column label="评论" width="90">
           <template #default="{ row }">{{ fmtNum(row.comment_count) }}</template>
         </el-table-column>

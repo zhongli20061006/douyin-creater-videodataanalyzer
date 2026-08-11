@@ -48,5 +48,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/*.local
 
+# 浏览器插件
+extension/node_modules/
+!extension/**/*.html
+
 # 生成的文档产物（源码 generate_doc.py 保留）
 *.docx

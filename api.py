@@ -15,6 +15,8 @@ from pydantic import BaseModel
 import quality as quality_service
 import collector
 import queue_service
+import extension_receiver
+import analyzer
 
 os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
 
@@ -39,7 +41,8 @@ except Exception:
     REDIS_HOST = 'localhost'
     REDIS_PORT = 6379
     REDIS_PARAMS = {}
-    REDIS_START_URLS_KEY = 'douyin:start_urls'
+REDIS_START_URLS_KEY = 'douyin:start_urls'
+VIDEO_IDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video_ids.txt')
 
 app = FastAPI(title='抖音爬虫管理面板', version='1.0.0')
 
@@ -549,6 +552,127 @@ def quality_export(
         media_type='text/csv; charset=utf-8',
         headers={'Content-Disposition': 'attachment; filename="douyin_data.csv"'},
     )
+
+
+class ExtensionVideosRequest(BaseModel):
+    source_url: str
+    videos: list[dict]
+
+
+@app.post('/api/extension/videos')
+def extension_receive(req: ExtensionVideosRequest):
+    """浏览器插件数据接收器：校验 → 批次内去重 → 部分更新 upsert。"""
+    valid, rejected = extension_receiver.validate_batch(req.model_dump())
+    if not valid and not rejected:
+        raise HTTPException(status_code=400, detail='没有可处理的记录')
+    records = extension_receiver.dedupe_records(valid)
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            for record in records:
+                sql, params = extension_receiver.build_upsert(record)
+                cursor.execute(sql, params)
+            db.commit()
+    finally:
+        db_close(db)
+    return {
+        'source_url': req.source_url,
+        'accepted': len(valid),
+        'upserted': len(records),
+        'rejected': rejected,
+    }
+
+
+class ExtensionIdsRequest(BaseModel):
+    video_ids: list[str]
+    author_id: str = ''
+
+
+@app.post('/api/extension/ids')
+def extension_save_ids(req: ExtensionIdsRequest):
+    """把插件采集到的 video_id 去重追加到 video_ids.txt，供爬虫后续刷新数据。"""
+    if not (1 <= len(req.video_ids) <= extension_receiver.MAX_BATCH):
+        raise HTTPException(
+            status_code=400,
+            detail=f'video_ids 必须是 1-{extension_receiver.MAX_BATCH} 条',
+        )
+    cleaned: list[str] = []
+    rejected: list[str] = []
+    for vid in req.video_ids:
+        vid = (vid or '').strip()
+        if extension_receiver.validate_video_id(vid):
+            cleaned.append(vid)
+        else:
+            rejected.append(vid)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail='没有合法的 video_id')
+    added, total = extension_receiver.append_ids_file(VIDEO_IDS_PATH, cleaned)
+    return {'added': added, 'total': total, 'rejected': rejected}
+
+
+@app.get('/api/extension/ids')
+def extension_list_ids():
+    """返回 video_ids.txt 的数量与列表，供前端查看/导入爬虫队列。"""
+    ids = extension_receiver.read_ids_file(VIDEO_IDS_PATH)
+    return {'total': len(ids), 'video_ids': ids}
+
+
+@app.put('/api/extension/ids')
+def extension_replace_ids(req: ExtensionIdsRequest):
+    """前端直接编辑保存：校验后覆盖写入 video_ids.txt（锁 + 原子替换）。"""
+    if len(req.video_ids) > 2000:
+        raise HTTPException(status_code=400, detail='video_ids 数量超限（最多 2000 条）')
+    cleaned: list[str] = []
+    rejected: list[str] = []
+    for vid in req.video_ids:
+        vid = (vid or '').strip()
+        if extension_receiver.validate_video_id(vid):
+            cleaned.append(vid)
+        else:
+            rejected.append(vid)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail='没有合法的 video_id')
+    total = extension_receiver.write_ids_file(VIDEO_IDS_PATH, cleaned)
+    return {'total': total, 'rejected': rejected}
+
+
+@app.get('/api/analyze/authors')
+def analyze_authors():
+    """作者下拉数据源：author_id + author_name + 视频数。"""
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute("""
+                SELECT author_id, author_name, COUNT(*) AS count
+                FROM video_info
+                WHERE author_id IS NOT NULL AND author_id <> ''
+                GROUP BY author_id, author_name
+                ORDER BY count DESC
+            """)
+            rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    return {'authors': rows}
+
+
+@app.get('/api/analyze/personal')
+def analyze_personal(author_id: str = Query(..., description='作者 uid')):
+    """按作者聚合个人分析：概览 / 发布趋势 / Top 视频。"""
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute('SELECT * FROM video_info WHERE author_id = %s', (author_id,))
+            rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    author_name = (rows[0].get('author_name') or '') if rows else ''
+    return {
+        'author_id': author_id,
+        'author_name': author_name,
+        'summary': analyzer.summarize_rows(rows),
+        'trend': analyzer.build_trend(rows),
+        'top_videos': analyzer.top_videos(rows),
+    }
 
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
