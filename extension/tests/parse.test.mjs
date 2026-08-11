@@ -8,6 +8,7 @@ const {
   parseCount,
   extractSecUidFromHref,
   parseProfileCards,
+  parseVideoDetail,
 } = require('../content/parse.js')
 
 function domOf(html) {
@@ -94,4 +95,37 @@ test('parseProfileCards 统计缺失字段', () => {
   assert.equal(cards.length, 1)
   assert.ok(cards[0].missing_fields.includes('video_title'))
   assert.ok(cards[0].missing_fields.includes('play_count'))
+})
+
+const DETAIL_HTML = `
+<div>
+  <div data-e2e="feed-video" data-e2e-vid="7671480850864786742">
+    <video poster="https://p3-sign.douyinpic.com/poster.jpeg?x-signature=def"></video>
+  </div>
+  <div data-e2e="video-desc"><span>第262集：标题</span><a href="//www.douyin.com/search/%E5%8E%86%E5%8F%B2?aweme_id=7671480850864786742">#历史</a></div>
+  <a href="//www.douyin.com/user/MS4wLjABAAAATTGGMqqjAd_B2UP9s9ThMW5sj0J0Hw4XtLCytt0UOBI">@作者</a>
+  <div data-e2e="video-player-digg"><div></div><div class="n1ekR9OB">4.0万</div></div>
+  <div data-e2e="feed-comment-icon"><div></div><div class="cipURsys">481</div></div>
+  <div data-e2e="video-player-share"><div></div><div class="mvwEat0w">1150</div></div>
+</div>
+`
+
+test('parseVideoDetail 提取互动数据与作者 secUid', () => {
+  const { document } = domOf(DETAIL_HTML).window
+  const detail = parseVideoDetail(document)
+  assert.equal(detail.video_id, '7671480850864786742')
+  assert.equal(detail.like_count, 40000)
+  assert.equal(detail.comment_count, 481)
+  assert.equal(detail.share_count, 1150)
+  assert.equal(detail.video_desc, '第262集：标题#历史')
+  assert.equal(detail.video_url, 'https://www.douyin.com/video/7671480850864786742')
+  assert.equal(detail.cover_url, 'https://p3-sign.douyinpic.com/poster.jpeg?x-signature=def')
+  assert.equal(detail.author_sec_uid, 'MS4wLjABAAAATTGGMqqjAd_B2UP9s9ThMW5sj0J0Hw4XtLCytt0UOBI')
+  assert.equal(detail.play_count, null)
+  assert.equal(detail.publish_time, null)
+})
+
+test('parseVideoDetail 无 video_id 返回 null', () => {
+  const { document } = domOf('<div></div>').window
+  assert.equal(parseVideoDetail(document), null)
 })

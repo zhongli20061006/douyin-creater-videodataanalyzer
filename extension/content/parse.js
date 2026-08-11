@@ -85,7 +85,77 @@
     return results;
   }
 
-  const api = { parseCount, extractSecUidFromHref, parseProfileCards };
+  /**
+   * 解析视频详情页互动数据。
+   * @param {Element} root document 或详情页容器
+   * @returns {object|null} video_id/like_count/comment_count/share_count/video_desc/
+   *                        video_url/cover_url/author_sec_uid/play_count(null)/publish_time(null)/
+   *                        missing_fields；video_id 缺失返回 null。
+   */
+  function parseVideoDetail(root) {
+    let video_id = '';
+    const vidEl = root.querySelector('[data-e2e="feed-video"]');
+    if (vidEl && vidEl.getAttribute('data-e2e-vid')) {
+      video_id = vidEl.getAttribute('data-e2e-vid').trim();
+    }
+    if (!video_id) {
+      const url = root.URL || (root.defaultView && root.defaultView.location.href) || '';
+      const m = String(url).match(/\/video\/(\d+)/);
+      if (m) video_id = m[1];
+    }
+    if (!video_id) return null;
+    const missing = [];
+
+    const likeValue = countIn(root.querySelector('[data-e2e="video-player-digg"]'));
+    const like_count = likeValue === null ? 0 : likeValue;
+    if (likeValue === null) missing.push('like_count');
+
+    const commentValue = countIn(root.querySelector('[data-e2e="feed-comment-icon"]'));
+    const comment_count = commentValue === null ? 0 : commentValue;
+    if (commentValue === null) missing.push('comment_count');
+
+    const shareValue = countIn(root.querySelector('[data-e2e="video-player-share"]'));
+    const share_count = shareValue === null ? 0 : shareValue;
+    if (shareValue === null) missing.push('share_count');
+
+    const descEl = root.querySelector('[data-e2e="video-desc"]');
+    const video_desc = descEl ? (descEl.textContent || '').trim() : '';
+    if (!video_desc) missing.push('video_desc');
+    const titleEl = descEl ? descEl.querySelector('span') : null;
+    const video_title = titleEl ? (titleEl.textContent || '').trim() : '';
+
+    const authorLink = root.querySelector('a[href*="/user/MS4wLj"]');
+    const author_sec_uid = authorLink
+      ? extractSecUidFromHref(authorLink.getAttribute('href'))
+      : '';
+
+    let cover_url = '';
+    const posterEl = root.querySelector('video[poster]');
+    if (posterEl) {
+      cover_url = posterEl.getAttribute('poster') || '';
+    } else {
+      const imgEl = root.querySelector('[data-e2e="feed-video"] img');
+      if (imgEl) cover_url = imgEl.getAttribute('src') || '';
+    }
+    if (!cover_url) missing.push('cover_url');
+
+    return {
+      video_id: video_id,
+      video_title: video_title,
+      video_desc: video_desc,
+      like_count: like_count,
+      comment_count: comment_count,
+      share_count: share_count,
+      play_count: null,
+      publish_time: null,
+      video_url: 'https://www.douyin.com/video/' + video_id,
+      cover_url: cover_url,
+      author_sec_uid: author_sec_uid,
+      missing_fields: missing,
+    };
+  }
+
+  const api = { parseCount, extractSecUidFromHref, parseProfileCards, parseVideoDetail };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && !root.DouyinParse) root.DouyinParse = api;
 })(typeof window !== 'undefined' ? window : globalThis);
