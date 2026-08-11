@@ -10,6 +10,7 @@ from extension_receiver import (
     normalize_record,
     parse_count,
     parse_datetime,
+    read_ids_file,
     validate_batch,
     validate_source_url,
     validate_video_id,
@@ -239,3 +240,13 @@ def test_append_ids_file_no_tmp_leftover(tmp_path):
     append_ids_file(str(path), ['a'])
     leftovers = [p for p in tmp_path.iterdir() if p.name.endswith('.tmp')]
     assert leftovers == []
+
+
+def test_read_ids_file_reads_lines_and_skips_blanks(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a\n\nb\n', encoding='utf-8')
+    assert read_ids_file(str(path)) == ['a', 'b']
+
+
+def test_read_ids_file_missing_returns_empty(tmp_path):
+    assert read_ids_file(str(tmp_path / 'missing.txt')) == []

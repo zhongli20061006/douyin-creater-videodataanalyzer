@@ -610,6 +610,13 @@ def extension_save_ids(req: ExtensionIdsRequest):
     return {'added': added, 'total': total, 'rejected': rejected}
 
 
+@app.get('/api/extension/ids')
+def extension_list_ids():
+    """返回 video_ids.txt 的数量与列表，供前端查看/导入爬虫队列。"""
+    ids = extension_receiver.read_ids_file(VIDEO_IDS_PATH)
+    return {'total': len(ids), 'video_ids': ids}
+
+
 @app.get('/api/analyze/authors')
 def analyze_authors():
     """作者下拉数据源：author_id + author_name + 视频数。"""

@@ -212,6 +212,11 @@ def _read_ids(path: str) -> list[str]:
         return [line.strip() for line in f if line.strip()]
 
 
+def read_ids_file(path: str) -> list[str]:
+    """读取 video_ids.txt 全部 ID（去空白行）；文件缺失返回空列表。"""
+    return _read_ids(path)
+
+
 def _write_ids_atomic(path: str, ids: list[str]) -> None:
     """写临时文件 + os.replace 原子替换，避免写一半损坏。"""
     directory = os.path.dirname(path) or '.'

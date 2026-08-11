@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   const P = window.DouyinParse;
-  const MAX_VIDEOS = 100;
+  const MAX_VIDEOS = 1000; // 全量采集：上限放宽，停止由滚动到底（无新增+高度不变）决定
   const BATCH_SIZE = 100;
   const DETAIL_DEBOUNCE_MS = 60 * 1000;
   const KEY_BACKEND = 'backendBaseUrl';
