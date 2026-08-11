@@ -9,6 +9,7 @@ const menus = [
   { index: '/videos', label: '视频数据' },
   { index: '/collect', label: '收集任务' },
   { index: '/quality', label: '数据质量' },
+  { index: '/personal', label: '个人分析' },
 ]
 </script>
 
