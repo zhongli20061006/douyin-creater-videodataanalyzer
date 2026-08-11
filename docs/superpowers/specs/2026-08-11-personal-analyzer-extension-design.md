@@ -87,6 +87,38 @@
 - 两层共用同一个接收接口与 upsert 逻辑：主页先建行（play_count 有值、
   互动字段为空/0），详情页浏览后覆盖补充互动字段——数据逐步完善，不重复造记录。
 
+### 已确认的页面结构（2026-08-11 用户真实页面实测）
+
+以下选择器均来自用户在自己主页/详情页实际复制出的 DOM，作为解析实现依据。
+抖音使用哈希 class（如 `BP1CQkLg`），会随版本变化，因此解析以
+`data-e2e` + 结构定位为主，哈希 class 只作候选兜底（见「逐字段容错」）。
+
+**主页作品列表（自己主页，作品 tab）：**
+
+| 内容 | 结构 |
+| --- | --- |
+| 列表容器 | `div[data-e2e="user-post-list"]` |
+| 卡片 | 容器内 `ul > li`（每个 li 一张卡片） |
+| 视频链接 / video_id | `li a[href*="/video/"]`，从 `href` 提取 `/video/(\d+)`；链接带 `secUid=` 参数 |
+| 图文卡片 | `li a[href*="/note/"]` → **跳过**（只采视频，不采图文） |
+| 播放量 play_count | 卡片内播放图标 svg 所在容器 `div.jXmtohcJ` 的**最后一个 `span`**（样本 `.BP1CQkLg` = `236`，纯数字，需支持 `万/亿` 解析） |
+| 标题 video_title | `li p.frUrWD64`（卡片下方标题，含话题标签）；兜底 `p.EB3BkdQ8`（封面上标题） |
+| 封面 cover_url | 卡片内 `img` 的 `src`（douyinpic.com 签名图） |
+| 作者 | `RENDER_DATA` 的 `app.user.info`：`nickname` / `uid` / `secUid`（见白名单） |
+
+**视频详情页：**
+
+| 内容 | 结构 |
+| --- | --- |
+| 视频容器 / video_id | `div[data-e2e="feed-video"]`，`data-e2e-vid` 属性即 video_id |
+| 标题/描述 | `div[data-e2e="video-desc"]`（标题 span + 话题标签链接，话题链接含 `aweme_id`） |
+| 作者 | `a[href*="/user/MS4wLj"]`（昵称 + secUid，用于白名单比对） |
+| 点赞 like_count | `div[data-e2e="video-player-digg"]` 内数字 span（样本 `4.0万`，需转 40000） |
+| 评论 comment_count | `div[data-e2e="feed-comment-icon"]` 内数字 span（样本 `481`） |
+| 分享 share_count | `div[data-e2e="video-player-share"]` 内数字 span（样本 `1150`） |
+| 收藏 | `div[data-e2e="video-player-collect"]` → **不采集**（现有表无收藏字段，`share_count` 只存分享） |
+| 发布时间 publish_time | 当前版本未找到绝对时间元素（旧版 `detail-video-publish-time` 已不存在）→ MVP 留空，见「已知限制」 |
+
 ## 4. 插件设计（extension/）
 
 ### 目录结构
@@ -120,13 +152,25 @@ MVP 不制作图标资源（manifest 不声明 icons，Chrome 使用默认图标
 
 ### 身份白名单（合规边界，插件端强制）
 
-- 只在 `https://www.douyin.com/user/{sec_uid}` 页面启用；
-- 从页面获取「当前登录账号」的 sec_user_id（页面用户信息/DOM/已登录态），
-  与 URL 中的 sec_uid 比对，不一致则**不显示采集按钮**并提示「只能采集自己主页的数据」；
-- 兼容抖音页面结构变化：若无法从页面确认当前登录账号，默认不启用采集并给出提示。
+白名单用「页面内已有数据」做三层校验，插件**不发任何额外请求**：
 
-详情页模式同样做白名单校验：详情页作者（页面作者链接中的 sec_uid）必须与
-当前登录账号一致，才自动提取并上报；否则忽略该页（用户可能在浏览他人视频）。
+1. **主页模式启用条件**（全部满足才显示采集按钮）：
+   - URL 为 `https://www.douyin.com/user/self` 或 `https://www.douyin.com/user/{sec_uid}`；
+   - 页面 `RENDER_DATA`（`window.SSR_RENDER_DATA`）存在且
+     `app.user.isLogin === true` 且 `app.user.info.uid === app.odin.user_id`
+     （主页主人 uid 等于当前登录账号 uid——源码实测成立：自己主页时两者同为
+     `4358913414407163`；访问他人主页时两者不等，插件不启用）；
+   - 页面存在 `div[data-e2e="user-post-list"]`（作品 tab 已渲染）。
+2. **身份缓存**：主页模式通过校验后，把 `app.user.info.uid / secUid / nickname`
+   写入 `chrome.storage.local`（键 `myUid` / `mySecUid` / `myNickname`），
+   供详情页模式比对；同时校验主页卡片链接 `href` 中的 `secUid=` 与
+   `app.user.info.secUid` 一致（防页面篡改）。
+3. **详情页模式启用条件**：URL 为 `/video/{video_id}`，且详情页作者
+   `a[href*="/user/MS4wLj"]` 提取的 secUid === `chrome.storage.local.mySecUid`；
+   未缓存 `mySecUid`（用户还没在自己主页采集过）时提示先回自己主页采集一次；
+   浏览他人视频时直接忽略，不采集不上报。
+
+页面结构变化导致无法确认登录身份时，默认不启用采集并给出提示（宁可不采，不采错）。
 
 ### 采集流程（collect.js）
 
@@ -154,11 +198,16 @@ MVP 不制作图标资源（manifest 不声明 icons，Chrome 使用默认图标
 
 - `parse.js` 两个解析函数对每个字段独立 try/catch；单个元素取不到时该字段记为 `null`（字符串类）
   或 `0`（计数类），**不中断整条/整批采集**；
+- 选择器策略：优先 `data-e2e` 属性与结构定位，哈希 class 只作兜底候选；
+  每个字段按候选选择器依次尝试，全部取不到才记为缺失——兼容抖音改版；
 - 每条视频记录统计 `missing_fields: string[]`（字段名列表），
   主页模式与详情页模式分别汇总「字段缺失条数」展示给用户
   （主页层缺的是互动/发布时间字段，属预期；详情页浏览后会被补齐）；
 - 单条记录若连 video_id 都取不到，标记为该条解析失败并跳过（计入被拒/跳过数）；
 - 解析失败绝不把异常抛到采集主循环外。
+
+**数字解析 `parseCount(text)`**：支持纯数字（`236`、`481`）、
+`万`（`4.0万` → 40000）、`亿`（`1.2亿` → 120000000）；解析失败返回 0 并计入缺失。
 
 ### 配置页（options.html / options.js）
 
@@ -333,12 +382,12 @@ MVP 不制作图标资源（manifest 不声明 icons，Chrome 使用默认图标
 
 - `extension/tests/parse.test.mjs`：用 `node --test` 跑；
 - fixture 分两组：
-  - 主页卡片组：构造含播放量/标题/链接/封面的卡片 HTML 片段
-    （含缺失字段、结构变化场景），断言 `parseProfileCards()` 字段提取、缺失统计、
-    video_id 缺失时的跳过行为；
-  - 详情页组：按本地 `douyin_page.html` 的元素结构（`detail-video-publish-time`、
-    `video-player-digg`、`feed-comment-icon`、`video-player-share`）构造 fixture，
-    断言 `parseVideoDetail()` 提取与回补行为；
+  - 主页卡片组：按实测结构构造 `li` 卡片（`a[href*="/video/"]` + `secUid` 参数、
+    `div.jXmtohcJ span` 播放量、`p.frUrWD64` 标题、`img` 封面、`a[href*="/note/"]` 图文），
+    断言字段提取、图文跳过、`4.0万` 解析、video_id 缺失跳过、缺失统计；
+  - 详情页组：按实测结构构造 `video-player-digg`（`4.0万`）、`feed-comment-icon`、
+    `video-player-share`、`video-desc`、`a[href*="/user/MS4wLj"]` 的 fixture，
+    断言 `parseVideoDetail()` 提取、`parseCount` 万/亿转换、作者 secUid 提取；
 - 真实翻页采集属 T3（真实站点交互），由用户在自己主页按验收清单执行
   （本机无法用真实抖音会话自动化验证，README 注明）。
 
@@ -350,10 +399,16 @@ MVP 不制作图标资源（manifest 不声明 icons，Chrome 使用默认图标
 
 ## 9. 已知限制（如实标注到 README 与页面）
 
-- **主页采集层只采到播放量等卡片字段**：点赞/评论/分享/发布时间/描述在主页卡片
-  不可见，需用户点开自己的视频详情页后由详情页采集层回补；未浏览过详情页的视频，
+- **主页采集层只采到播放量与卡片字段**：点赞/评论/分享/描述在主页卡片不可见，
+  需用户点开自己的视频详情页后由详情页采集层回补；未浏览过详情页的视频，
   这些字段保持空/0（看板「最近同步时间」可帮助判断数据完整度）；
-- 主页卡片字段随页面改版可能变化：取不到的字段按容错规则记 null/0 并计入缺失统计；
+- **发布时间 MVP 留空**：当前版本详情页未发现绝对发布时间元素
+  （旧版 `data-e2e="detail-video-publish-time"` 已下线），主页卡片也无时间；
+  待后续「被动网络 hook」（观察页面已有接口响应中的 `create_time`）补齐；
+- **图文（note）不采集**：只采 `/video/` 视频卡片，`/note/` 图文卡片跳过；
+- **收藏数不采集**：现有 12 字段表无收藏列，`share_count` 只存分享数；
+- 主页卡片/详情页的哈希 class 会随抖音改版变化：按「data-e2e + 结构」解析、
+  多选择器兜底、取不到记 null/0 并计入缺失统计；
 - `video_desc` / `video_url`：详情页不一定携带 → 取不到记 null；
 - 局域网/远端后端地址需要浏览器 host 权限授权，README 说明；
 - sec_user_id「是自己」的校验只能在插件端完成，后端无法复核。
