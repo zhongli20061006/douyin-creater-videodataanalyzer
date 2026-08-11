@@ -13,6 +13,8 @@ const {
   findScrollContainer,
   mergeCardWithHook,
   drainHookQueue,
+  idsFromBatch,
+  progressLabel,
 } = require('../content/parse.js')
 
 function domOf(html) {
@@ -247,4 +249,24 @@ test('drainHookQueue 回放并清空缓冲', () => {
   assert.equal(messages.length, 1)
   assert.equal(messages[0].source, 'dy-analyzer-hook')
   assert.equal(document.documentElement.__dyAnalyzerQueue.length, 0)
+})
+
+test('idsFromBatch 提取并去重 video_id', () => {
+  const batch = [
+    { video_id: '7672018085449279859', video_title: 'a' },
+    { video_id: '7672018085449279860', video_title: 'b' },
+    { video_id: '7672018085449279859', video_title: 'a-dup' },
+  ]
+  assert.deepEqual(idsFromBatch(batch), ['7672018085449279859', '7672018085449279860'])
+})
+
+test('idsFromBatch 空批与缺 id 记录返回空数组', () => {
+  assert.deepEqual(idsFromBatch([]), [])
+  assert.deepEqual(idsFromBatch([{ video_id: '' }, { video_title: 'x' }]), [])
+})
+
+test('progressLabel 生成采集进度文案', () => {
+  assert.equal(progressLabel(0), '采集中 0 条')
+  assert.equal(progressLabel(39), '采集中 39 条')
+  assert.equal(progressLabel(100), '采集中 100 条')
 })

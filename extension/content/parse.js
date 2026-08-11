@@ -282,9 +282,29 @@
     return messages;
   }
 
+  /** 从一批记录中提取去重后的 video_id 列表（每批 ≤ 100，天然满足后端上限）。*/
+  function idsFromBatch(records) {
+    const seen = new Set();
+    const ids = [];
+    for (const r of records || []) {
+      const vid = r && r.video_id ? String(r.video_id) : '';
+      if (vid && !seen.has(vid)) {
+        seen.add(vid);
+        ids.push(vid);
+      }
+    }
+    return ids;
+  }
+
+  /** 采集进度文案：采集中 N 条。*/
+  function progressLabel(count) {
+    return '采集中 ' + Number(count || 0) + ' 条';
+  }
+
   const api = {
     parseCount, extractSecUidFromHref, parseProfileCards, parseVideoDetail,
     parseAwemeList, findScrollContainer, mergeCardWithHook, drainHookQueue,
+    idsFromBatch, progressLabel,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && !root.DouyinParse) root.DouyinParse = api;
