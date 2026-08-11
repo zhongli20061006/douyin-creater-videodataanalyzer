@@ -26,11 +26,26 @@
   }
 
   function storageGet(keys) {
-    return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get(keys, resolve);
+      } catch (e) {
+        // 扩展重新加载后旧 content script 上下文失效，提示刷新页面并降级为空配置
+        console.warn('[dy-analyzer] 扩展上下文已失效，请刷新页面', e);
+        resolve({});
+      }
+    });
   }
 
   function storageSet(obj) {
-    return new Promise((resolve) => chrome.storage.local.set(obj, resolve));
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.set(obj, () => resolve());
+      } catch (e) {
+        console.warn('[dy-analyzer] 扩展上下文已失效，请刷新页面', e);
+        resolve();
+      }
+    });
   }
 
   async function getConfig() {
@@ -276,7 +291,7 @@
       const info = data && data.app && data.app.user && data.app.user.info;
       if (info) {
         // 始终以当前自己主页的身份为准，覆盖可能变化的缓存
-        chrome.storage.local.set({
+        storageSet({
           [KEY_UID]: info.uid,
           [KEY_SEC_UID]: info.secUid,
           [KEY_NICKNAME]: info.nickname,
