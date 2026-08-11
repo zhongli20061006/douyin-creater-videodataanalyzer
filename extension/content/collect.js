@@ -13,6 +13,7 @@
   const KEY_SEC_UID = 'mySecUid';
   const KEY_NICKNAME = 'myNickname';
   const KEY_MODE = 'complianceMode';
+  const KEY_TOKEN = 'apiToken';
   const DEFAULT_BACKEND = 'http://127.0.0.1:8001';
   const HOOK_EVENT = 'dy-analyzer-data';
 
@@ -53,13 +54,14 @@
   }
 
   async function getConfig() {
-    const data = await storageGet([KEY_BACKEND, KEY_UID, KEY_SEC_UID, KEY_NICKNAME, KEY_MODE]);
+    const data = await storageGet([KEY_BACKEND, KEY_UID, KEY_SEC_UID, KEY_NICKNAME, KEY_MODE, KEY_TOKEN]);
     return {
       backendBaseUrl: normalizeBase(data[KEY_BACKEND]),
       myUid: data[KEY_UID] || '',
       mySecUid: data[KEY_SEC_UID] || '',
       myNickname: data[KEY_NICKNAME] || '',
       complianceMode: data[KEY_MODE] || 'unlimited',
+      apiToken: data[KEY_TOKEN] || '',
     };
   }
 
@@ -96,7 +98,7 @@
     const cfg = await getConfig();
     const resp = await fetch(cfg.backendBaseUrl + '/api/extension/ids', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-API-Token': cfg.apiToken },
       body: JSON.stringify({ video_ids: videoIds, author_id: authorId }),
     });
     if (!resp.ok) {
@@ -105,6 +107,10 @@
         const err = await resp.json();
         detail = err.detail || detail;
       } catch (e) { /* ignore */ }
+      if (resp.status === 401 || resp.status === 403 || resp.status === 503) {
+        detail = '后端拒绝了请求：请检查 API 令牌配置（选项页与 local_config.py 一致）。' +
+          (detail ? ' ' + detail : '');
+      }
       throw new Error(detail);
     }
     return resp.json();
@@ -146,7 +152,7 @@
     const cfg = await getConfig();
     const resp = await fetch(cfg.backendBaseUrl + '/api/extension/videos', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-API-Token': cfg.apiToken },
       body: JSON.stringify({ source_url: sourceUrl, videos: videos }),
     });
     if (!resp.ok) {
@@ -155,6 +161,10 @@
         const err = await resp.json();
         detail = err.detail || detail;
       } catch (e) { /* ignore */ }
+      if (resp.status === 401 || resp.status === 403 || resp.status === 503) {
+        detail = '后端拒绝了请求：请检查 API 令牌配置（选项页与 local_config.py 一致）。' +
+          (detail ? ' ' + detail : '');
+      }
       throw new Error(detail);
     }
     return resp.json();

@@ -6,6 +6,9 @@ from extension_receiver import (
     append_ids_file,
     build_upsert,
     dedupe_records,
+    evaluate_write_guard,
+    is_allowed_origin,
+    is_valid_token,
     merge_ids,
     normalize_record,
     parse_count,
@@ -265,3 +268,51 @@ def test_write_ids_file_empty_clears(tmp_path):
     path.write_text('a\nb\n', encoding='utf-8')
     assert write_ids_file(str(path), []) == 0
     assert path.read_text(encoding='utf-8') == ''
+
+
+def test_is_valid_token():
+    assert is_valid_token('abc', 'abc') is True
+    assert is_valid_token('abc', 'abd') is False
+    assert is_valid_token('', 'abc') is False
+    assert is_valid_token('abc', '') is False
+    assert is_valid_token(None, 'abc') is False
+
+
+def test_is_allowed_origin():
+    allowed = ['http://127.0.0.1:8001', 'http://localhost:8001', 'http://localhost:5173']
+    assert is_allowed_origin('http://127.0.0.1:8001', allowed) is True
+    assert is_allowed_origin('http://127.0.0.1:8001/', allowed) is True
+    assert is_allowed_origin('HTTP://LOCALHOST:8001', allowed) is True
+    assert is_allowed_origin('https://evil.com', allowed) is False
+    assert is_allowed_origin(None, allowed) is False
+
+
+def test_evaluate_write_guard_whitelist_origin():
+    allowed = ['http://127.0.0.1:8001']
+    ok, status, reason = evaluate_write_guard('http://127.0.0.1:8001', '', '', allowed)
+    assert ok is True and status is None and reason is None
+
+
+def test_evaluate_write_guard_fail_closed_when_token_unconfigured():
+    allowed = ['http://127.0.0.1:8001']
+    ok, status, reason = evaluate_write_guard('https://www.douyin.com', 'anything', '', allowed)
+    assert ok is False and status == 503
+    assert 'EXTENSION_API_TOKEN' in reason
+
+
+def test_evaluate_write_guard_rejects_missing_token():
+    allowed = ['http://127.0.0.1:8001']
+    ok, status, reason = evaluate_write_guard('https://www.douyin.com', '', 'secret', allowed)
+    assert ok is False and status == 403
+
+
+def test_evaluate_write_guard_rejects_wrong_token():
+    allowed = ['http://127.0.0.1:8001']
+    ok, status, reason = evaluate_write_guard('https://www.douyin.com', 'bad', 'secret', allowed)
+    assert ok is False and status == 401
+
+
+def test_evaluate_write_guard_allows_valid_token():
+    allowed = ['http://127.0.0.1:8001']
+    ok, status, reason = evaluate_write_guard('https://www.douyin.com', 'secret', 'secret', allowed)
+    assert ok is True and status is None and reason is None

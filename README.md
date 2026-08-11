@@ -125,6 +125,13 @@ npm run build              # 生产构建，由后端在 /app 提供服务
 .\.venv\Scripts\python.exe -m pytest tests/ -q
 ```
 
+## 后端安全
+- 默认仅绑定 127.0.0.1（`run_backend.ps1` / `start_server.py` 可传 `--host` 覆盖，用于将来需要时手动开放局域网）；
+- 扩展写接口（`/api/extension/*`、爬虫/队列控制、质量修复/删除、删除视频）鉴权规则：
+  Origin 在本机白名单（127.0.0.1/localhost:8001、localhost:5173）或请求头 `X-API-Token` 匹配 `local_config.py` 的 `EXTENSION_API_TOKEN`；
+- 令牌未配置时扩展上报一律拒绝（fail-closed，返回 503 并提示）；扩展选项页需填写同一令牌；
+- 已知边界：读接口不校验令牌，靠 CORS 白名单兜底；令牌以明文存于本机 `local_config.py` 与浏览器存储，请勿外传。
+
 插件解析单测（需先 `cd extension; npm install`）：
 
 ```powershell

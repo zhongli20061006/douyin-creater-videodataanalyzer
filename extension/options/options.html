@@ -29,6 +29,11 @@
     </select>
     <div class="hint">无限制仅用于本地开发与对照，请勿将他人主页数据公开或商用。</div>
   </div>
+  <div class="row">
+    <label for="token">API 令牌</label>
+    <input id="token" type="text" placeholder="与 local_config.py 的 EXTENSION_API_TOKEN 一致" />
+    <div class="hint">后端已启用鉴权：令牌不匹配或未配置时采集上报会被拒绝。</div>
+  </div>
   <button id="save">保存</button>
   <button id="reset">恢复默认</button>
   <div id="status"></div>

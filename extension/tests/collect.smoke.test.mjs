@@ -34,14 +34,15 @@ function createPage() {
           mySecUid: 's1',
           myNickname: '测试',
           complianceMode: 'unlimited',
+          apiToken: 'test-token',
         }),
         set: (_obj, cb) => { if (cb) cb() },
       },
     },
   }
   const calls = []
-  window.fetch = async (url) => {
-    calls.push(String(url))
+  window.fetch = async (url, opts = {}) => {
+    calls.push({ url: String(url), headers: (opts && opts.headers) || {} })
     if (String(url).includes('/api/extension/ids')) {
       return { ok: true, json: async () => ({ added: 0, total: 2 }) }
     }
@@ -84,8 +85,14 @@ test('主页采集显示实时计数并可手动停止，数据与 id 照常上�
     }))
 
     // 已采数据照常入库、id 按批上报
-    assert.ok(calls.some((u) => u.includes('/api/extension/videos')))
-    assert.ok(calls.some((u) => u.includes('/api/extension/ids')))
+    assert.ok(calls.some((c) => c.url.includes('/api/extension/videos')))
+    assert.ok(calls.some((c) => c.url.includes('/api/extension/ids')))
+    const videoCall = calls.find((c) => c.url.includes('/api/extension/videos'))
+    assert.ok(videoCall, '应有 /api/extension/videos 调用')
+    assert.equal(videoCall.headers['X-API-Token'], 'test-token')
+    const idsCall = calls.find((c) => c.url.includes('/api/extension/ids'))
+    assert.ok(idsCall, '应有 /api/extension/ids 调用')
+    assert.equal(idsCall.headers['X-API-Token'], 'test-token')
 
     // 采集结束按钮复位
     assert.ok(await waitFor(() => mainBtn.textContent === '开始采集'))

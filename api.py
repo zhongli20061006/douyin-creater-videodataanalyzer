@@ -6,7 +6,7 @@ import redis
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse, Response
@@ -44,15 +44,38 @@ except Exception:
 REDIS_START_URLS_KEY = 'douyin:start_urls'
 VIDEO_IDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video_ids.txt')
 
+try:
+    from local_config import EXTENSION_API_TOKEN
+except Exception:
+    EXTENSION_API_TOKEN = ''
+
+ALLOWED_ORIGINS = [
+    'http://127.0.0.1:8001',
+    'http://localhost:8001',
+    'http://localhost:5173',
+]
+
 app = FastAPI(title='抖音爬虫管理面板', version='1.0.0')
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
 )
+
+
+def verify_write_guard(
+    origin: Optional[str] = Header(default=None),
+    x_api_token: Optional[str] = Header(default=None, alias='X-API-Token'),
+) -> None:
+    """写接口守卫：Origin 白名单或 X-API-Token 通过；未配置令牌时 fail-closed。"""
+    allowed, status_code, reason = extension_receiver.evaluate_write_guard(
+        origin, x_api_token, EXTENSION_API_TOKEN, ALLOWED_ORIGINS,
+    )
+    if not allowed:
+        raise HTTPException(status_code=status_code, detail=reason)
 
 
 def get_redis():
@@ -344,7 +367,7 @@ def stats_authors():
     return {'authors': rows}
 
 
-@app.post('/api/crawl', response_model=CrawlResponse)
+@app.post('/api/crawl', response_model=CrawlResponse, dependencies=[Depends(verify_write_guard)])
 def push_crawl(req: CrawlRequest):
     try:
         r = get_redis()
@@ -370,7 +393,7 @@ def push_crawl(req: CrawlRequest):
         raise HTTPException(status_code=503, detail='Redis 服务不可用')
 
 
-@app.delete('/api/videos/{video_id}')
+@app.delete('/api/videos/{video_id}', dependencies=[Depends(verify_write_guard)])
 def delete_video(video_id: str):
     db = get_db()
     try:
@@ -408,7 +431,7 @@ def get_queue_items(limit: int = Query(50, ge=1, le=200)):
 
 # ── Spider Control ──
 
-@app.post('/api/spider/start')
+@app.post('/api/spider/start', dependencies=[Depends(verify_write_guard)])
 def spider_start():
     ok, msg = spider_manager.start()
     if not ok:
@@ -418,7 +441,7 @@ def spider_start():
     return status
 
 
-@app.post('/api/spider/stop')
+@app.post('/api/spider/stop', dependencies=[Depends(verify_write_guard)])
 def spider_stop():
     ok, msg = spider_manager.stop()
     if not ok:
@@ -445,7 +468,7 @@ class CollectRequest(BaseModel):
     max_count: int = 50
 
 
-@app.post('/api/collect/author')
+@app.post('/api/collect/author', dependencies=[Depends(verify_write_guard)])
 def collect_author(req: CollectRequest):
     if not req.author_url.strip():
         raise HTTPException(status_code=400, detail='请输入作者主页链接')
@@ -482,7 +505,7 @@ def quality_report():
     return {'summary': quality_service.summarize(rows), 'issues': issues}
 
 
-@app.post('/api/quality/fix')
+@app.post('/api/quality/fix', dependencies=[Depends(verify_write_guard)])
 def quality_fix():
     db = get_db()
     try:
@@ -501,7 +524,7 @@ def quality_fix():
     }
 
 
-@app.post('/api/quality/delete')
+@app.post('/api/quality/delete', dependencies=[Depends(verify_write_guard)])
 def quality_delete(req: QualityDeleteRequest):
     if len(req.video_ids) > quality_service.MAX_DELETE_IDS:
         raise HTTPException(status_code=400, detail=f'单次最多删除 {quality_service.MAX_DELETE_IDS} 条，请分批操作')
@@ -559,7 +582,7 @@ class ExtensionVideosRequest(BaseModel):
     videos: list[dict]
 
 
-@app.post('/api/extension/videos')
+@app.post('/api/extension/videos', dependencies=[Depends(verify_write_guard)])
 def extension_receive(req: ExtensionVideosRequest):
     """浏览器插件数据接收器：校验 → 批次内去重 → 部分更新 upsert。"""
     valid, rejected = extension_receiver.validate_batch(req.model_dump())
@@ -588,7 +611,7 @@ class ExtensionIdsRequest(BaseModel):
     author_id: str = ''
 
 
-@app.post('/api/extension/ids')
+@app.post('/api/extension/ids', dependencies=[Depends(verify_write_guard)])
 def extension_save_ids(req: ExtensionIdsRequest):
     """把插件采集到的 video_id 去重追加到 video_ids.txt，供爬虫后续刷新数据。"""
     if not (1 <= len(req.video_ids) <= extension_receiver.MAX_BATCH):
@@ -617,7 +640,7 @@ def extension_list_ids():
     return {'total': len(ids), 'video_ids': ids}
 
 
-@app.put('/api/extension/ids')
+@app.put('/api/extension/ids', dependencies=[Depends(verify_write_guard)])
 def extension_replace_ids(req: ExtensionIdsRequest):
     """前端直接编辑保存：校验后覆盖写入 video_ids.txt（锁 + 原子替换）。"""
     if len(req.video_ids) > 2000:

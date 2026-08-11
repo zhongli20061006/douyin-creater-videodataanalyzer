@@ -35,6 +35,41 @@ def validate_source_url(url: Any) -> bool:
     return isinstance(url, str) and bool(SOURCE_URL_RE.match(url.strip()))
 
 
+def is_valid_token(provided, expected) -> bool:
+    """API 令牌校验；expected 为空一律视为未配置（fail-closed）。"""
+    if not expected or not provided:
+        return False
+    return str(provided) == str(expected)
+
+
+def is_allowed_origin(origin, allowed_origins) -> bool:
+    """Origin 是否在白名单：去尾部斜杠、host 小写后比较。"""
+    if not origin:
+        return False
+    normalized = str(origin).strip().rstrip('/')
+    host = normalized.split('://')[-1].lower()
+    for item in allowed_origins or []:
+        item_norm = str(item).strip().rstrip('/')
+        if item_norm == normalized:
+            return True
+        if item_norm.split('://')[-1].lower() == host:
+            return True
+    return False
+
+
+def evaluate_write_guard(origin, provided_token, expected_token, allowed_origins) -> tuple:
+    """写接口守卫：Origin 白名单或令牌通过。返回 (allowed, status_code, reason)。"""
+    if is_allowed_origin(origin, allowed_origins):
+        return True, None, None
+    if not expected_token:
+        return False, 503, '后端未配置 API 令牌（local_config.py 的 EXTENSION_API_TOKEN）'
+    if not provided_token:
+        return False, 403, '来源不被允许且未提供 API 令牌'
+    if str(provided_token) != str(expected_token):
+        return False, 401, 'API 令牌无效'
+    return True, None, None
+
+
 def parse_datetime(value: Any) -> Optional[datetime]:
     """接受 ISO 8601 / 'YYYY-MM-DD HH:MM:SS' / 'YYYY-MM-DD'；无效返回 None（不拒绝）。"""
     if value is None or value == '':
