@@ -41,7 +41,8 @@ except Exception:
     REDIS_HOST = 'localhost'
     REDIS_PORT = 6379
     REDIS_PARAMS = {}
-    REDIS_START_URLS_KEY = 'douyin:start_urls'
+REDIS_START_URLS_KEY = 'douyin:start_urls'
+VIDEO_IDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video_ids.txt')
 
 app = FastAPI(title='抖音爬虫管理面板', version='1.0.0')
 
@@ -580,6 +581,33 @@ def extension_receive(req: ExtensionVideosRequest):
         'upserted': len(records),
         'rejected': rejected,
     }
+
+
+class ExtensionIdsRequest(BaseModel):
+    video_ids: list[str]
+    author_id: str = ''
+
+
+@app.post('/api/extension/ids')
+def extension_save_ids(req: ExtensionIdsRequest):
+    """把插件采集到的 video_id 去重追加到 video_ids.txt，供爬虫后续刷新数据。"""
+    if not (1 <= len(req.video_ids) <= extension_receiver.MAX_BATCH):
+        raise HTTPException(
+            status_code=400,
+            detail=f'video_ids 必须是 1-{extension_receiver.MAX_BATCH} 条',
+        )
+    cleaned: list[str] = []
+    rejected: list[str] = []
+    for vid in req.video_ids:
+        vid = (vid or '').strip()
+        if extension_receiver.validate_video_id(vid):
+            cleaned.append(vid)
+        else:
+            rejected.append(vid)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail='没有合法的 video_id')
+    added, total = extension_receiver.append_ids_file(VIDEO_IDS_PATH, cleaned)
+    return {'added': added, 'total': total, 'rejected': rejected}
 
 
 @app.get('/api/analyze/authors')
