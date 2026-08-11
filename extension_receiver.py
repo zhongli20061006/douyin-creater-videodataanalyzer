@@ -141,3 +141,44 @@ def validate_batch(payload: dict) -> tuple[list[dict], list[dict]]:
         else:
             valid.append(record)
     return valid, rejected
+
+
+INSERT_COLUMNS = (
+    'video_id', 'video_title', 'video_desc', 'author_name', 'author_id',
+    'publish_time', 'like_count', 'comment_count', 'share_count', 'play_count',
+    'video_url', 'cover_url',
+)
+
+
+def dedupe_records(records: list[dict]) -> list[dict]:
+    """批次内按 video_id 去重，保留第一条。"""
+    seen: set[str] = set()
+    result: list[dict] = []
+    for record in records:
+        video_id = record['video_id']
+        if video_id in seen:
+            continue
+        seen.add(video_id)
+        result.append(record)
+    return result
+
+
+def build_upsert(record: dict) -> tuple[str, tuple]:
+    """构建部分更新 upsert SQL。
+
+    - INSERT 写入全部 12 字段（None → NULL）；
+    - ON DUPLICATE KEY UPDATE 只更新非 None 字段 + crawl_time/update_time，
+      因此主页层（play_count 有值、互动为 None）不会覆盖详情页已补的互动数据。
+    """
+    values = [record.get(c) for c in INSERT_COLUMNS]
+    placeholders = ', '.join(['%s'] * len(INSERT_COLUMNS))
+    update_cols = [c for c in INSERT_COLUMNS[1:] if record.get(c) is not None]
+    updates = [f'{c}=VALUES({c})' for c in update_cols]
+    updates.append('crawl_time=NOW()')
+    updates.append('update_time=NOW()')
+    sql = (
+        f'INSERT INTO video_info ({", ".join(INSERT_COLUMNS)}, crawl_time) '
+        f'VALUES ({placeholders}, NOW()) '
+        f'ON DUPLICATE KEY UPDATE {", ".join(updates)}'
+    )
+    return sql, tuple(values)

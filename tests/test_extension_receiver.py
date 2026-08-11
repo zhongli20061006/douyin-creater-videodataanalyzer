@@ -3,6 +3,8 @@ from datetime import datetime
 
 from extension_receiver import (
     MAX_BATCH,
+    build_upsert,
+    dedupe_records,
     normalize_record,
     parse_count,
     parse_datetime,
@@ -143,3 +145,57 @@ def test_validate_batch_passes_clean_batch():
     assert len(valid) == 2
     assert valid[0]['like_count'] == 40000
     assert valid[1]['like_count'] is None
+
+
+def test_dedupe_records_keeps_first_by_video_id():
+    records = [
+        {'video_id': '1', 'play_count': 10},
+        {'video_id': '2', 'play_count': 20},
+        {'video_id': '1', 'play_count': 99},
+    ]
+    result = dedupe_records(records)
+    assert [r['video_id'] for r in result] == ['1', '2']
+    assert result[0]['play_count'] == 10
+
+
+def test_build_upsert_skips_none_fields():
+    record = {
+        'video_id': '7638884656238410714',
+        'video_title': '标题',
+        'video_desc': '',
+        'author_name': '我',
+        'author_id': 'A',
+        'publish_time': None,
+        'like_count': None,
+        'comment_count': None,
+        'share_count': None,
+        'play_count': 236,
+        'video_url': '',
+        'cover_url': '',
+    }
+    sql, params = build_upsert(record)
+    assert 'like_count=VALUES(like_count)' not in sql
+    assert 'play_count=VALUES(play_count)' in sql
+    assert 'crawl_time=NOW()' in sql
+    assert params[0] == '7638884656238410714'
+    assert params[9] == 236
+
+
+def test_build_upsert_includes_present_count_fields():
+    record = {
+        'video_id': '7638884656238410714',
+        'video_title': '标题',
+        'video_desc': '',
+        'author_name': '我',
+        'author_id': 'A',
+        'publish_time': None,
+        'like_count': 40000,
+        'comment_count': 481,
+        'share_count': 1150,
+        'play_count': None,
+        'video_url': '',
+        'cover_url': '',
+    }
+    sql, _ = build_upsert(record)
+    assert 'like_count=VALUES(like_count)' in sql
+    assert 'play_count=VALUES(play_count)' not in sql
