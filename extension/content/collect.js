@@ -192,7 +192,18 @@
     return btn;
   }
 
+  function removeCollectButton() {
+    const b = document.getElementById('dy-analyzer-btn');
+    if (b) b.remove();
+  }
+
   async function collectProfile() {
+    // 强校验：只能在当前登录账号自己的主页采集（防 SPA 切换后的残留按钮）
+    if (!isOwnProfile()) {
+      removeCollectButton();
+      showToast('只能在自己主页采集');
+      return;
+    }
     const btn = document.getElementById('dy-analyzer-btn');
     const root = document.querySelector('[data-e2e="user-post-list"]');
     if (!root) {
@@ -202,6 +213,12 @@
     const cfg = await getConfig();
     const author = { author_name: cfg.myNickname, author_id: cfg.myUid };
     const scroller = P.findScrollContainer(root, document);
+    console.log(
+      '[dy-analyzer] 采集开始: scroller=',
+      scroller ? scroller.tagName + '.' + String(scroller.className || '').slice(0, 40) : 'none(window)',
+      '初始li=', root.querySelectorAll('li').length,
+      'hook已缓存=', hookMap.size,
+    );
     btn.textContent = '采集中…';
     btn.style.pointerEvents = 'none';
 
@@ -225,6 +242,10 @@
           }
         }
         roundsWithoutNew = added === 0 ? roundsWithoutNew + 1 : 0;
+        console.log(
+          '[dy-analyzer] 一轮: li=', root.querySelectorAll('li').length,
+          'seen=', seen.size, '本轮新增=', added, '无新增轮数=', roundsWithoutNew,
+        );
         if (seen.size >= MAX_VIDEOS) break;
         if (scroller) {
           scroller.scrollTop = scroller.scrollHeight;
@@ -404,6 +425,9 @@
           if (addButtonWhenReady()) obs.disconnect();
         }).observe(document.body, { childList: true, subtree: true });
       }
+    } else {
+      // SPA 切换到他人主页/其它页面时移除残留按钮
+      removeCollectButton();
     }
   }
 
