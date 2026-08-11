@@ -30,13 +30,19 @@
 7. 采集字段：全量基础字段（video_id、video_title、video_desc、author_name、author_id、
    publish_time、like_count、comment_count、share_count、play_count、video_url、cover_url）。
 
-本窗口新增的 3 条补充建议（已确认纳入）：
+本窗口新增的 4 条补充建议（已确认纳入）：
 
 - 插件后端地址可配置，存入 `chrome.storage.local`，默认 `http://127.0.0.1:8001`，
   支持局域网/远端后端；
 - DOM 提取逐字段容错：元素取不到记 null/0，不中断采集；
   结果展示「成功条数」与「字段缺失条数」，而不是「失败条数」；
 - 看板显示「最近同步时间」（= `MAX(crawl_time)`），用户重复采集后可判断数据新旧。
+- **分层工作流**：抖音自己主页的视频卡片直接显示**播放量**（而非点赞量），
+  因此主页采集层先采 play_count 等卡片字段；用户点进自己的视频详情页后，
+  详情页采集层被动提取点赞/评论/分享/发布时间/描述等详细数据并回补该 video_id。
+  本地 `douyin_page.html` 样例已确认详情页存在 `data-e2e="detail-video-publish-time"`
+  （绝对发布时间）、`video-player-digg`、`feed-comment-icon`、`video-player-share`
+  等元素，分层方案有据可依。
 
 ## 2. 范围
 
@@ -59,9 +65,10 @@
 
 ```text
 博主浏览器（真实登录会话）
-  抖音自己主页 DOM ──插件提取──▶ 本地/局域网后端 :8001
-                                  POST /api/extension/videos
-                                  校验 → 批次内去重 → upsert
+  自己主页 DOM（播放量等卡片字段）──┐
+                                  ├─▶ 本地/局域网后端 :8001
+  点击自己的视频详情页（点赞/评论/   │    POST /api/extension/videos
+    分享/发布时间/描述）────────────┘    校验 → 批次内去重 → upsert
                                         ▼
                               video_info 表（现有表，零结构变更）
                                         ▼
@@ -69,6 +76,16 @@
 ```
 
 插件只读已渲染的 DOM，不发额外采集请求；后端是唯一写入入口。
+
+### 两层工作流
+
+- **主页采集层**：博主在自己主页点「开始采集」后自动滚动翻页，
+  提取卡片字段（video_id、标题、**播放量**、封面、作者信息），分批上报；
+- **详情页采集层**：用户自然浏览时点开自己的视频详情页
+  （`https://www.douyin.com/video/{video_id}`），插件被动提取该视频的
+  点赞/评论/分享/发布时间/描述等详细数据，自动回补上报同一个 video_id；
+- 两层共用同一个接收接口与 upsert 逻辑：主页先建行（play_count 有值、
+  互动字段为空/0），详情页浏览后覆盖补充互动字段——数据逐步完善，不重复造记录。
 
 ## 4. 插件设计（extension/）
 
@@ -78,8 +95,10 @@
 extension/
   manifest.json          # MV3：content_scripts 匹配 douyin.com；权限 storage、host_permissions
   content/
-    parse.js             # 纯 DOM 解析函数（可在 Node 单测；无 chrome API 依赖）
-    collect.js           # content script 入口：身份白名单/按钮/滚动/上报/结果展示
+    parse.js             # 纯 DOM 解析：parseProfileCards()（主页卡片）+ parseVideoDetail()（详情页）
+                         # （可在 Node 单测；无 chrome API 依赖）
+    collect.js           # content script 入口：主页模式（白名单/按钮/滚动/上报）
+                         # + 详情页模式（白名单/被动提取/防抖上报/结果提示）
   options/
     options.html         # 配置页：后端地址
     options.js           # 读写 chrome.storage.local
@@ -106,22 +125,38 @@ MVP 不制作图标资源（manifest 不声明 icons，Chrome 使用默认图标
   与 URL 中的 sec_uid 比对，不一致则**不显示采集按钮**并提示「只能采集自己主页的数据」；
 - 兼容抖音页面结构变化：若无法从页面确认当前登录账号，默认不启用采集并给出提示。
 
+详情页模式同样做白名单校验：详情页作者（页面作者链接中的 sec_uid）必须与
+当前登录账号一致，才自动提取并上报；否则忽略该页（用户可能在浏览他人视频）。
+
 ### 采集流程（collect.js）
+
+**主页模式：**
 
 1. 读取 `chrome.storage.local` 的后端地址（默认 `http://127.0.0.1:8001`）；
 2. 白名单校验通过后，在页面插入悬浮按钮「开始采集」；
 3. 点击后自动滚动翻页：每次滚动后等待随机间隔 1.5–3 秒（自然翻页），
    累计去重采集上限 **100 条**后停止（页面上显示已停止原因）；
-4. 每采集到一批新卡片即调用 `parse.js` 解析，随后分批
+4. 每采集到一批新卡片即调用 `parseProfileCards()` 解析
+   （video_id、video_title、play_count、cover_url、author 信息），随后分批
    `POST {后端地址}/api/extension/videos` 上报（每批 ≤ 100）；
 5. 全部结束后在按钮旁展示结果：成功条数、字段缺失条数、被拒条数（原因）。
 
+**详情页模式（被动，无需按钮）：**
+
+1. 在 `https://www.douyin.com/video/{video_id}` 激活，做白名单校验（作者是自己）；
+2. 调用 `parseVideoDetail()` 提取 video_id、publish_time（绝对时间）、
+   like_count、comment_count、share_count、video_desc、video_url、cover_url 等；
+3. 同一 video_id 60 秒内只上报一次（防抖，避免重复浏览反复请求）；
+4. 上报成功后页面右下角显示轻提示「已同步该视频详情」；
+5. 详情页不做自动滚动、不发起额外请求——完全跟随用户自然浏览节奏。
+
 ### 逐字段容错（parse.js + collect.js）
 
-- 解析函数对每个字段独立 try/catch；单个元素取不到时该字段记为 `null`（字符串类）
+- `parse.js` 两个解析函数对每个字段独立 try/catch；单个元素取不到时该字段记为 `null`（字符串类）
   或 `0`（计数类），**不中断整条/整批采集**；
 - 每条视频记录统计 `missing_fields: string[]`（字段名列表），
-  汇总为「字段缺失条数」展示给用户；
+  主页模式与详情页模式分别汇总「字段缺失条数」展示给用户
+  （主页层缺的是互动/发布时间字段，属预期；详情页浏览后会被补齐）；
 - 单条记录若连 video_id 都取不到，标记为该条解析失败并跳过（计入被拒/跳过数）；
 - 解析失败绝不把异常抛到采集主循环外。
 
@@ -297,8 +332,13 @@ MVP 不制作图标资源（manifest 不声明 icons，Chrome 使用默认图标
 ### 插件（parse.js 用 Node 内置测试，T2）
 
 - `extension/tests/parse.test.mjs`：用 `node --test` 跑；
-- fixture：构造含视频卡片的 HTML 片段（含缺失字段、结构变化场景），
-  断言字段提取、缺失统计、video_id 缺失时的跳过行为；
+- fixture 分两组：
+  - 主页卡片组：构造含播放量/标题/链接/封面的卡片 HTML 片段
+    （含缺失字段、结构变化场景），断言 `parseProfileCards()` 字段提取、缺失统计、
+    video_id 缺失时的跳过行为；
+  - 详情页组：按本地 `douyin_page.html` 的元素结构（`detail-video-publish-time`、
+    `video-player-digg`、`feed-comment-icon`、`video-player-share`）构造 fixture，
+    断言 `parseVideoDetail()` 提取与回补行为；
 - 真实翻页采集属 T3（真实站点交互），由用户在自己主页按验收清单执行
   （本机无法用真实抖音会话自动化验证，README 注明）。
 
@@ -310,17 +350,19 @@ MVP 不制作图标资源（manifest 不声明 icons，Chrome 使用默认图标
 
 ## 9. 已知限制（如实标注到 README 与页面）
 
-- `play_count`：主页卡片通常不展示播放量 → DOM 采集记 0，待网络 hook 补齐；
-- `publish_time`：主页卡片仅显示相对时间 → DOM 采集留空，待网络 hook 补齐；
-- `share_count`：不保证在卡片可见 → 取不到记 0；
-- `video_desc` / `video_url`：主页卡片不一定携带 → 取不到记 null；
+- **主页采集层只采到播放量等卡片字段**：点赞/评论/分享/发布时间/描述在主页卡片
+  不可见，需用户点开自己的视频详情页后由详情页采集层回补；未浏览过详情页的视频，
+  这些字段保持空/0（看板「最近同步时间」可帮助判断数据完整度）；
+- 主页卡片字段随页面改版可能变化：取不到的字段按容错规则记 null/0 并计入缺失统计；
+- `video_desc` / `video_url`：详情页不一定携带 → 取不到记 null；
 - 局域网/远端后端地址需要浏览器 host 权限授权，README 说明；
 - sec_user_id「是自己」的校验只能在插件端完成，后端无法复核。
 
 ## 10. 实施阶段
 
 1. **接收器**：`extension_receiver.py` + `POST /api/extension/videos` + 单测 + 真库验证；
-2. **插件**：`extension/` 全套 + Node 解析测试 + README；
+2. **插件**：`extension/` 全套（主页采集层 + 详情页采集层）+ Node 解析测试
+   （两组 fixture）+ README；
 3. **看板分析页**：`analyzer.py` + `GET /api/analyze/personal` + `PersonalAnalyzer.vue` +
    路由/菜单 + build 验证；
 4. **收尾**：README 更新、全量回归、用户浏览器验收清单交付。
