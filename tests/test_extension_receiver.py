@@ -3,8 +3,10 @@ from datetime import datetime
 
 from extension_receiver import (
     MAX_BATCH,
+    append_ids_file,
     build_upsert,
     dedupe_records,
+    merge_ids,
     normalize_record,
     parse_count,
     parse_datetime,
@@ -199,3 +201,41 @@ def test_build_upsert_includes_present_count_fields():
     sql, _ = build_upsert(record)
     assert 'like_count=VALUES(like_count)' in sql
     assert 'play_count=VALUES(play_count)' not in sql
+
+
+def test_merge_ids_keeps_existing_order_and_appends_new():
+    merged = merge_ids(['a', 'b'], ['c', 'a', 'd'])
+    assert merged == ['a', 'b', 'c', 'd']
+
+
+def test_merge_ids_removes_duplicates_in_existing():
+    merged = merge_ids(['a', 'a', 'b'], ['b', 'c'])
+    assert merged == ['a', 'b', 'c']
+
+
+def test_merge_ids_empty_inputs():
+    assert merge_ids([], []) == []
+    assert merge_ids(['a'], []) == ['a']
+    assert merge_ids([], ['a', 'b']) == ['a', 'b']
+
+
+def test_append_ids_file_merges_and_returns_counts(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a\nb\n', encoding='utf-8')
+    added, total = append_ids_file(str(path), ['b', 'c'])
+    assert (added, total) == (1, 3)
+    assert path.read_text(encoding='utf-8').splitlines() == ['a', 'b', 'c']
+
+
+def test_append_ids_file_creates_missing_file(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    added, total = append_ids_file(str(path), ['x', 'y'])
+    assert (added, total) == (2, 2)
+    assert path.read_text(encoding='utf-8').splitlines() == ['x', 'y']
+
+
+def test_append_ids_file_no_tmp_leftover(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    append_ids_file(str(path), ['a'])
+    leftovers = [p for p in tmp_path.iterdir() if p.name.endswith('.tmp')]
+    assert leftovers == []

@@ -3,6 +3,9 @@
 纯逻辑模块（与 quality.py 同模式），api.py 只做薄层调用。
 """
 import re
+import os
+import tempfile
+import threading
 from datetime import datetime
 from typing import Any, Optional
 
@@ -182,3 +185,94 @@ def build_upsert(record: dict) -> tuple[str, tuple]:
         f'ON DUPLICATE KEY UPDATE {", ".join(updates)}'
     )
     return sql, tuple(values)
+
+
+_IDS_FILE_LOCK = threading.Lock()
+
+
+def merge_ids(existing: list[str], new_ids: list[str]) -> list[str]:
+    """去重合并：保留已有顺序，新 ID 追加在末尾；返回新列表。"""
+    seen: set[str] = set()
+    merged: list[str] = []
+    for vid in existing:
+        if vid not in seen:
+            seen.add(vid)
+            merged.append(vid)
+    for vid in new_ids:
+        if vid not in seen:
+            seen.add(vid)
+            merged.append(vid)
+    return merged
+
+
+def _read_ids(path: str) -> list[str]:
+    if not os.path.exists(path):
+        return []
+    with open(path, 'r', encoding='utf-8') as f:
+        return [line.strip() for line in f if line.strip()]
+
+
+def _write_ids_atomic(path: str, ids: list[str]) -> None:
+    """写临时文件 + os.replace 原子替换，避免写一半损坏。"""
+    directory = os.path.dirname(path) or '.'
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix='.video_ids.', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(ids))
+            if ids:
+                f.write('\n')
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _lock_ids_file(path: str):
+    """跨平台文件锁：fcntl（POSIX）/ msvcrt（Windows）；返回锁句柄。
+    锁文件放系统临时目录，避免在项目根残留 .lock。
+    """
+    import hashlib
+    lock_name = 'dy_analyzer_ids_' + hashlib.md5(path.encode('utf-8')).hexdigest() + '.lock'
+    lock_path = os.path.join(tempfile.gettempdir(), lock_name)
+    fh = open(lock_path, 'a+')
+    try:
+        import fcntl  # type: ignore
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+    except ImportError:
+        import msvcrt  # type: ignore
+        fh.seek(0)
+        if fh.read(1) == '':
+            fh.write('\0')
+            fh.flush()
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+    return fh
+
+
+def _unlock_ids_file(fh) -> None:
+    try:
+        import fcntl  # type: ignore
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except ImportError:
+        import msvcrt  # type: ignore
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    fh.close()
+
+
+def append_ids_file(path: str, new_ids: list[str]) -> tuple[int, int]:
+    """并发安全地把新 ID 合并进文件：进程内锁 + 文件锁 + 原子替换。
+    返回 (新增条数, 合并后总条数)。
+    """
+    with _IDS_FILE_LOCK:
+        fh = _lock_ids_file(path)
+        try:
+            existing = _read_ids(path)
+            merged = merge_ids(existing, new_ids)
+            _write_ids_atomic(path, merged)
+            return len(merged) - len(existing), len(merged)
+        finally:
+            _unlock_ids_file(fh)
