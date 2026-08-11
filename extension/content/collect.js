@@ -224,27 +224,39 @@
     return !!document.querySelector('a[href*="/user/' + mySecUid + '"]');
   }
 
-  async function maybeCollectDetail() {
-    if (!/^\/video\/\d+/.test(location.pathname)) return;
+  /** 同步当前视频详情；manual=true 时所有失败都给出明确提示（用于手动排查）。 */
+  async function maybeCollectDetail(manual) {
+    if (!/^\/video\/\d+/.test(location.pathname)) {
+      if (manual) showToast('当前不是视频详情页');
+      return false;
+    }
     const cfg = await getConfig();
     if (!cfg.mySecUid) {
       showToast('请先在自己主页点一次「开始采集」，再浏览视频详情页');
-      return;
+      return false;
     }
     if (!hasSelfAuthorLink(cfg.mySecUid)) {
       console.log('[dy-analyzer] 非自己视频，跳过:', location.href);
-      return; // 别人的视频，忽略
+      if (manual) showToast('当前视频作者不是自己，不采集');
+      return false; // 别人的视频，忽略
     }
     const videoEl = document.querySelector('[data-e2e="feed-video"]');
     if (!videoEl) {
       console.log('[dy-analyzer] feed-video 未就绪，重试:', location.href);
-      return;
+      if (manual) showToast('详情数据（feed-video）尚未加载，请稍后重试');
+      return false;
     }
     const detail = P.parseVideoDetail(document);
-    if (!detail) return;
+    if (!detail) {
+      showToast('未解析到 video_id');
+      return false;
+    }
     const key = 'detail_last_' + detail.video_id;
     const stored = await storageGet(key);
-    if (stored[key] && Date.now() - stored[key] < DETAIL_DEBOUNCE_MS) return;
+    if (stored[key] && Date.now() - stored[key] < DETAIL_DEBOUNCE_MS) {
+      showToast('该视频 60 秒内已同步过，请稍后再试');
+      return false;
+    }
     await storageSet({ [key]: Date.now() });
     try {
       const payload = Object.assign({}, detail, {
@@ -258,9 +270,35 @@
         '已同步该视频详情（' + detail.video_id + '）' +
         (missing ? '，字段缺失 ' + missing + ' 处' : ''),
       );
+      return true;
     } catch (e) {
       showToast('同步失败：' + (e && e.message ? e.message : e));
+      return false;
     }
+  }
+
+  function createDetailButton() {
+    const old = document.getElementById('dy-analyzer-detail-btn');
+    if (old) old.remove();
+    const btn = document.createElement('div');
+    btn.id = 'dy-analyzer-detail-btn';
+    btn.textContent = '同步本页';
+    btn.style.cssText =
+      'position:fixed;right:16px;bottom:64px;z-index:2147483647;background:#67c23a;color:#fff;' +
+      'border-radius:20px;padding:8px 14px;font-size:13px;cursor:pointer;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.35);user-select:none;font-family:system-ui,sans-serif;';
+    btn.addEventListener('click', async () => {
+      btn.textContent = '同步中…';
+      await maybeCollectDetail(true);
+      btn.textContent = '同步本页';
+    });
+    document.body.appendChild(btn);
+    return btn;
+  }
+
+  function removeDetailButton() {
+    const b = document.getElementById('dy-analyzer-detail-btn');
+    if (b) b.remove();
   }
 
   /* ---------- 启动（主页模式） ---------- */
@@ -268,6 +306,7 @@
   function startDetailMode() {
     if (detailStarted) return;
     detailStarted = true;
+    createDetailButton();
     const attempt = (n) => {
       setTimeout(async () => {
         if (!/^\/video\/\d+/.test(location.pathname)) return;
@@ -311,6 +350,8 @@
       }
     } else if (/^\/video\/\d+/.test(location.pathname)) {
       startDetailMode();
+    } else {
+      removeDetailButton();
     }
   }
 
