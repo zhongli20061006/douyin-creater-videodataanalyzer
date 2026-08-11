@@ -194,6 +194,44 @@
     }
   }
 
+  /* ---------- 详情页模式 ---------- */
+
+  function authorSecUidOfPage() {
+    const link = document.querySelector('a[href*="/user/MS4wLj"]');
+    return link ? P.extractSecUidFromHref(link.getAttribute('href')) : '';
+  }
+
+  async function maybeCollectDetail() {
+    if (!/^\/video\/\d+/.test(location.pathname)) return;
+    const cfg = await getConfig();
+    if (!cfg.mySecUid) {
+      showToast('请先在自己主页点一次「开始采集」，再浏览视频详情页');
+      return;
+    }
+    if (authorSecUidOfPage() !== cfg.mySecUid) return; // 别人的视频，忽略
+    if (!document.querySelector('[data-e2e="feed-video"]')) return;
+    const detail = P.parseVideoDetail(document);
+    if (!detail) return;
+    const key = 'detail_last_' + detail.video_id;
+    const stored = await storageGet(key);
+    if (stored[key] && Date.now() - stored[key] < DETAIL_DEBOUNCE_MS) return;
+    await storageSet({ [key]: Date.now() });
+    try {
+      const payload = Object.assign({}, detail, {
+        author_name: cfg.myNickname,
+        author_id: cfg.myUid,
+      });
+      const res = await report([payload], 'https://www.douyin.com/user/' + cfg.mySecUid);
+      const missing = (detail.missing_fields || []).length;
+      showToast(
+        '已同步该视频详情（' + detail.video_id + '）' +
+        (missing ? '，字段缺失 ' + missing + ' 处' : ''),
+      );
+    } catch (e) {
+      showToast('同步失败：' + (e && e.message ? e.message : e));
+    }
+  }
+
   /* ---------- 启动（主页模式） ---------- */
 
   function init() {
@@ -218,6 +256,23 @@
       if (!addButtonWhenReady()) {
         new MutationObserver((_, obs) => {
           if (addButtonWhenReady()) obs.disconnect();
+        }).observe(document.body, { childList: true, subtree: true });
+      }
+    } else if (/^\/video\/\d+/.test(location.pathname)) {
+      let started = false;
+      const tryStart = () => {
+        if (started) return;
+        started = true;
+        setTimeout(maybeCollectDetail, 1200);
+      };
+      if (document.querySelector('[data-e2e="feed-video"]')) {
+        tryStart();
+      } else {
+        new MutationObserver((_, obs) => {
+          if (document.querySelector('[data-e2e="feed-video"]')) {
+            tryStart();
+            obs.disconnect();
+          }
         }).observe(document.body, { childList: true, subtree: true });
       }
     }
