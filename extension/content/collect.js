@@ -14,7 +14,6 @@
   const KEY_NICKNAME = 'myNickname';
   const KEY_MODE = 'complianceMode';
   const DEFAULT_BACKEND = 'http://127.0.0.1:8001';
-  const DETAIL_RETRY_TIMES = 4;
   const HOOK_EVENT = 'dy-analyzer-data';
 
   let homeButtonAdded = false;
@@ -290,7 +289,7 @@
           rejected.push({ video_id: 'batch' + i, reason: String(e.message || e) });
         }
       }
-      const reason = seen.size >= MAX_VIDEOS ? '（已达 100 条上限）' : '';
+      const reason = seen.size >= MAX_VIDEOS ? '（已达采集上限 ' + MAX_VIDEOS + ' 条）' : '';
       showToast(
         '采集完成' + reason + '：成功 ' + collected.length + ' 条，字段缺失 ' +
         missingCount + ' 处，被拒 ' + rejected.length + ' 条',
@@ -405,19 +404,13 @@
     if (detailStarted) return;
     detailStarted = true;
     createDetailButton();
-    const attempt = (n) => {
-      setTimeout(async () => {
-        if (!isDetailView()) return;
-        if (isDetailView()) {
-          await maybeCollectDetail();
-        } else if (n < DETAIL_RETRY_TIMES) {
-          attempt(n + 1);
-        } else {
-          console.log('[dy-analyzer] feed-video 多次未出现，放弃:', location.href);
-        }
-      }, 1200);
-    };
-    attempt(0);
+    setTimeout(async () => {
+      if (isDetailView()) {
+        await maybeCollectDetail();
+      } else {
+        console.log('[dy-analyzer] feed-video 未出现，放弃自动同步:', location.href);
+      }
+    }, 1200);
   }
 
   function init() {
