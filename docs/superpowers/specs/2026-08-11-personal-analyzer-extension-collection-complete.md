@@ -84,11 +84,16 @@ collect.js（content_scripts，isolated world）
   - 结构检查仅对可解析为 JSON 的响应进行，避免对非 JSON 流量做无谓解析；
 - `hook.js` **只读**响应：不修改请求头/体，不发送任何新请求；
 - **消息缓冲（时序竞争防护）**：hook.js 以 `document_start` 注入，可能早于
-  content script 的消息监听器就绪。因此：
-  - hook.js 每次解析到数据时，**同时** `postMessage` 给 content script，
-    并 push 到页面全局队列 `window.__dyAnalyzerQueue`（数组）；
-  - collect.js 注册 `message` 监听器后，**先回放**该队列（消费后置空），
-    再依赖实时消息——保证接口第一帧数据不丢失；
+  content script 的监听器就绪。MV3 中 content script 处于 isolated world，
+  **收不到页面 window 的 `postMessage`、也读不到页面 window 的属性**，
+  因此通道必须走共享的 DOM：
+  - hook.js 每次解析到数据时，`document.dispatchEvent(new CustomEvent('dy-analyzer-data',
+    { detail: JSON.stringify({source:'dy-analyzer-hook', data: json}) }))` 实时分发；
+  - 同时 push 到共享缓冲 `document.documentElement.__dyAnalyzerQueue`
+    （DOM 节点自定义属性，跨 world 可见）；
+  - collect.js 注册 `document.addEventListener('dy-analyzer-data', ...)` 后，
+    **先回放**缓冲队列（`drainHookQueue` 消费后置空），再依赖实时事件——
+    保证接口第一帧数据不丢失；
   - 队列防内存泄漏：消费后清空；若 content script 长期未消费（异常），
     hook 侧在队列长度超过阈值（如 500 条）时丢弃最旧消息。
 - `parse.js` 新增纯函数 `parseAwemeList(json)`：从 `aweme_list` 提取
