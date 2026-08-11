@@ -1,7 +1,7 @@
 # 抖音个人视频数据分析器 - 采集完善设计（主页全量翻页 + 网络 hook + video_id 保留）
 
 日期：2026-08-11
-状态：待用户审阅（两个决策点采用推荐方案，备选已列明被拒理由）
+状态：已按用户审阅意见纳入三个「排雷点」（消息缓冲 / 文件并发 / 接口容错），待用户复核
 前置设计：`docs/superpowers/specs/2026-08-11-personal-analyzer-extension-design.md`（MVP 基线，本设计为其采集链路的完善修订）
 
 ## 1. 背景与问题
@@ -74,10 +74,23 @@ collect.js（content_scripts，isolated world）
 
 - `manifest.json` 增加 `hook.js`（`"world": "MAIN"`、`run_at: document_start`，
   仅 `https://www.douyin.com/*`）；
-- 接口匹配规则（前缀匹配，命中任一）：
-  - 作品列表：URL 含 `/aweme/v1/web/aweme/post/`（主页翻页数据源）；
-  - 详情类：URL 含 `/aweme/v1/web/aweme/detail/`（浏览详情时的补充）；
+- 接口匹配规则（两层）：
+  - **URL 快速路径**：作品列表命中 URL 含 `/aweme/v1/web/aweme/post/`；
+    详情类命中 URL 含 `/aweme/v1/web/aweme/detail/`；
+  - **结构兜底**：URL 未命中时，对已捕获的 JSON 响应做结构检查——
+    顶层含数组且元素含 `aweme_id` / `statistics`（作品列表结构），
+    或含 `aweme` 对象且含 `aweme_id` / `statistics`（详情结构），同样解析。
+    这样字节跳动把 `v1` 改成 `v2` 或调整路径时，只要响应结构没变仍能自动抓取；
+  - 结构检查仅对可解析为 JSON 的响应进行，避免对非 JSON 流量做无谓解析；
 - `hook.js` **只读**响应：不修改请求头/体，不发送任何新请求；
+- **消息缓冲（时序竞争防护）**：hook.js 以 `document_start` 注入，可能早于
+  content script 的消息监听器就绪。因此：
+  - hook.js 每次解析到数据时，**同时** `postMessage` 给 content script，
+    并 push 到页面全局队列 `window.__dyAnalyzerQueue`（数组）；
+  - collect.js 注册 `message` 监听器后，**先回放**该队列（消费后置空），
+    再依赖实时消息——保证接口第一帧数据不丢失；
+  - 队列防内存泄漏：消费后清空；若 content script 长期未消费（异常），
+    hook 侧在队列长度超过阈值（如 500 条）时丢弃最旧消息。
 - `parse.js` 新增纯函数 `parseAwemeList(json)`：从 `aweme_list` 提取
   `video_id / video_title / video_desc / play_count / like_count / comment_count / share_count /
    publish_time(create_time) / cover_url / author_name / author_id`，
@@ -92,7 +105,11 @@ collect.js（content_scripts，isolated world）
   去重、保持顺序、返回新列表（可单测）；
 - `api.py` 新增 `POST /api/extension/ids`（body: `{video_ids: [...], author_id}`）：
   - 校验：video_ids 非空、每条 15–20 位数字、条数 ≤ 100；
-  - 读取项目根 `video_ids.txt` → `merge_ids` 去重合并 → 写回文件；
+  - **并发安全写入**：读取项目根 `video_ids.txt` → `merge_ids` 去重合并
+    → 写入**临时文件** → `os.replace` **原子替换**（避免写一半损坏文件）；
+  - 加**文件锁**防止多请求并发读写互相覆盖丢失更新：
+    优先 `fcntl`（Linux/macOS），Windows 用 `msvcrt.locking`，
+    平台均不可用时降级为「原子替换 + 进程内线程锁」（单用户场景足够）；
   - 返回 `{added, total}`（added = 新增条数，total = 合并后文件行数）；
 - `video_ids.txt` 已在 `.gitignore`（不提交）；文件缺失时自动创建；
 - collect.js 主页采集结束后调用该端点（同一批 video_ids 去重后提交）。
@@ -110,6 +127,7 @@ collect.js（content_scripts，isolated world）
 - `tests/test_extension_receiver.py` 新增：
   - `merge_ids` 去重/保序/保留已有内容；
   - `/api/extension/ids` 校验（空列表/非法 ID/超 100 条拒绝）；
+  - 写入为「临时文件 + 原子替换」路径（断言目标文件最终内容正确、无半截文件残留）；
 - 真库/文件验证：临时写 `video_ids.txt` 测试内容 → 调接口 → 验证合并结果 → 恢复原文件
   （不动用户已有内容；测试用前缀 `ext_test_` 的 ID）。
 
@@ -119,6 +137,8 @@ collect.js（content_scripts，isolated world）
   - `parseAwemeList`：用构造的接口 JSON fixture（含完整 statistics / create_time /
     缺失字段场景）断言字段提取与容错；
   - `findScrollContainer`：jsdom 嵌套滚动容器 fixture 断言容器命中与 window 兜底；
+  - hook 消息缓冲：模拟「监听器未就绪时先入队 → 注册后回放」的场景断言不丢消息
+    （缓冲逻辑提取为可单测的纯函数）；
 - `collect.js` 的滚动/上报编排依赖真实页面，维持 T3 真机验收；
 - 验收清单更新：主页一次采全（58/58）、播放量 100% 有值、`video_ids.txt` 追加成功。
 
