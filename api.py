@@ -1,6 +1,9 @@
 import json
 import os
 import subprocess
+import threading
+import time as time_module
+from contextlib import asynccontextmanager
 import pymysql
 import redis
 from datetime import datetime
@@ -17,6 +20,8 @@ import collector
 import queue_service
 import extension_receiver
 import analyzer
+import cleanup_service
+from time_filter import build_publish_filter
 
 os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
 
@@ -55,7 +60,14 @@ ALLOWED_ORIGINS = [
     'http://localhost:5173',
 ]
 
-app = FastAPI(title='抖音爬虫管理面板', version='1.0.0')
+@asynccontextmanager
+async def lifespan(_app):
+    """应用启动时注册定时清理后台线程（daemon，进程退出自动结束）。"""
+    threading.Thread(target=_cleanup_loop, daemon=True).start()
+    yield
+
+
+app = FastAPI(title='抖音爬虫管理面板', version='1.0.0', lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,6 +114,14 @@ def get_db():
         )
     except pymysql.Error as e:
         raise HTTPException(status_code=503, detail=f'MySQL 连接失败: {e}')
+
+
+def apply_publish_filter(start_date: str, end_date: str):
+    """把 start_date/end_date 转成 SQL 过滤条件；非法参数抛 400。"""
+    try:
+        return build_publish_filter(start_date or None, end_date or None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def db_close(db):
@@ -245,6 +265,8 @@ def list_videos(
     search: str = Query('', description='搜索视频标题/作者/ID'),
     sort_by: str = Query('crawl_time', description='排序字段'),
     order: str = Query('desc', pattern='^(asc|desc)$'),
+    start_date: str = Query('', description='发布时间起始（YYYY-MM-DD）'),
+    end_date: str = Query('', description='发布时间结束（YYYY-MM-DD）'),
 ):
     allowed_sort = {
         'video_id', 'video_title', 'author_name', 'publish_time',
@@ -256,36 +278,47 @@ def list_videos(
 
     order_clause = 'DESC' if order == 'desc' else 'ASC'
     offset = (page - 1) * page_size
+    publish_clause, publish_params = apply_publish_filter(start_date, end_date)
 
     db = get_db()
     try:
         with db.cursor() as cursor:
             if search:
                 search_param = f'%{search}%'
-                count_sql = """
-                    SELECT COUNT(*) AS total FROM video_info
-                    WHERE video_id LIKE %s OR video_title LIKE %s OR author_name LIKE %s
-                """
-                cursor.execute(count_sql, (search_param, search_param, search_param))
+                where_parts = ['(video_id LIKE %s OR video_title LIKE %s OR author_name LIKE %s)']
+                count_params = [search_param, search_param, search_param]
+                if publish_clause:
+                    where_parts.append(publish_clause)
+                    count_params.extend(publish_params)
+                where_sql = ' AND '.join(where_parts)
+                count_sql = f'SELECT COUNT(*) AS total FROM video_info WHERE {where_sql}'
+                cursor.execute(count_sql, tuple(count_params))
                 total = cursor.fetchone()['total']
 
                 data_sql = f"""
                     SELECT * FROM video_info
-                    WHERE video_id LIKE %s OR video_title LIKE %s OR author_name LIKE %s
+                    WHERE {where_sql}
                     ORDER BY {sort_by} {order_clause}
                     LIMIT %s OFFSET %s
                 """
-                cursor.execute(data_sql, (search_param, search_param, search_param, page_size, offset))
+                cursor.execute(data_sql, tuple(count_params + [page_size, offset]))
             else:
-                cursor.execute('SELECT COUNT(*) AS total FROM video_info')
+                where_parts = []
+                count_params = []
+                if publish_clause:
+                    where_parts.append(publish_clause)
+                    count_params.extend(publish_params)
+                where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
+                cursor.execute(f'SELECT COUNT(*) AS total FROM video_info {where_sql}', tuple(count_params))
                 total = cursor.fetchone()['total']
 
                 data_sql = f"""
                     SELECT * FROM video_info
+                    {where_sql}
                     ORDER BY {sort_by} {order_clause}
                     LIMIT %s OFFSET %s
                 """
-                cursor.execute(data_sql, (page_size, offset))
+                cursor.execute(data_sql, tuple(count_params + [page_size, offset]))
 
             rows = cursor.fetchall()
 
@@ -315,11 +348,16 @@ def get_video(video_id: str):
 
 
 @app.get('/api/stats', response_model=StatsResponse)
-def get_stats():
+def get_stats(
+    start_date: str = Query('', description='发布时间起始（YYYY-MM-DD）'),
+    end_date: str = Query('', description='发布时间结束（YYYY-MM-DD）'),
+):
     db = get_db()
     try:
         with db.cursor() as cursor:
-            cursor.execute("""
+            publish_clause, publish_params = apply_publish_filter(start_date, end_date)
+            where_sql = ('WHERE ' + publish_clause) if publish_clause else ''
+            cursor.execute(f"""
                 SELECT
                     COUNT(*) AS total_videos,
                     COUNT(DISTINCT author_id) AS total_authors,
@@ -329,7 +367,8 @@ def get_stats():
                     COALESCE(SUM(play_count), 0) AS total_plays,
                     MAX(crawl_time) AS latest_crawl
                 FROM video_info
-            """)
+                {where_sql}
+            """, tuple(publish_params))
             row = cursor.fetchone()
     finally:
         db_close(db)
@@ -767,14 +806,22 @@ def analyze_authors():
 def analyze_personal(
     author_id: str = Query(..., description='作者 uid'),
     sort_by: str = Query('likes', description='Top 视频排序维度'),
+    start_date: str = Query('', description='发布时间起始（YYYY-MM-DD）'),
+    end_date: str = Query('', description='发布时间结束（YYYY-MM-DD）'),
 ):
     """按作者聚合个人分析：概览 / 发布趋势 / 播放趋势 / Top 视频。"""
-    if sort_by not in ('likes', 'plays', 'comments', 'shares', 'engagement'):
-        raise HTTPException(status_code=400, detail='sort_by 必须是 likes/plays/comments/shares/engagement')
+    if sort_by not in ('likes', 'plays', 'comments', 'shares', 'collects', 'engagement'):
+        raise HTTPException(status_code=400, detail='sort_by 必须是 likes/plays/comments/shares/collects/engagement')
     db = get_db()
     try:
         with db.cursor() as cursor:
-            cursor.execute('SELECT * FROM video_info WHERE author_id = %s', (author_id,))
+            publish_clause, publish_params = apply_publish_filter(start_date, end_date)
+            where_sql = 'author_id = %s'
+            where_params = [author_id]
+            if publish_clause:
+                where_sql += ' AND ' + publish_clause
+                where_params.extend(publish_params)
+            cursor.execute(f'SELECT * FROM video_info WHERE {where_sql}', tuple(where_params))
             rows = cursor.fetchall()
     finally:
         db_close(db)
@@ -787,6 +834,101 @@ def analyze_personal(
         'play_trend': analyzer.build_play_trend(rows),
         'top_videos': analyzer.top_videos(rows, sort_by=sort_by),
     }
+
+
+class CleanupToggleRequest(BaseModel):
+    enabled: bool
+
+
+@app.get('/api/cleanup/status')
+def cleanup_status():
+    """返回定时清理开关状态与上次执行时间。"""
+    try:
+        r = get_redis()
+        enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
+        last_clean_time = r.get('douyin:cleanup_last_time')
+    except redis.ConnectionError:
+        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return {'enabled': enabled, 'last_clean_time': last_clean_time}
+
+
+@app.post('/api/cleanup/toggle', dependencies=[Depends(verify_write_guard)])
+def cleanup_toggle(req: CleanupToggleRequest):
+    """切换定时清理开关（写接口，走令牌守卫）。"""
+    try:
+        r = get_redis()
+        r.set('douyin:cleanup_enabled', '1' if req.enabled else '0')
+    except redis.ConnectionError:
+        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return {'enabled': req.enabled}
+
+
+def _cleanup_once() -> None:
+    """执行一次清理检查：满足条件则备份并删除最旧 200 条。"""
+    r = get_redis()
+    enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
+    last_raw = r.get('douyin:cleanup_last_time')
+    last = None
+    if last_raw:
+        try:
+            last = datetime.fromisoformat(last_raw)
+        except ValueError:
+            last = None
+    if not cleanup_service.should_run_cleanup(enabled, last, datetime.now()):
+        return
+
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute('SELECT COUNT(*) AS n FROM video_info')
+            total = cursor.fetchone()['n']
+            if total <= cleanup_service.CLEANUP_BATCH_SIZE:
+                print(f'定时清理跳过：全库行数 {total} <= {cleanup_service.CLEANUP_BATCH_SIZE}')
+                return
+            cursor.execute(
+                'SELECT * FROM video_info ORDER BY update_time ASC LIMIT %s',
+                (cleanup_service.CLEANUP_BATCH_SIZE,),
+            )
+            rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    if not rows:
+        return
+
+    backup_dir = cleanup_service.CLEANUP_BACKUP_DIR
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(
+        backup_dir,
+        'cleanup_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '.csv',
+    )
+    with open(backup_path, 'w', encoding='utf-8', newline='') as f:
+        f.write(cleanup_service.build_backup_csv(rows))
+
+    ids = [str(r['video_id']) for r in rows]
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            placeholders = ', '.join(['%s'] * len(ids))
+            cursor.execute(
+                f'DELETE FROM video_info WHERE video_id IN ({placeholders})',
+                tuple(ids),
+            )
+            db.commit()
+    finally:
+        db_close(db)
+
+    r.set('douyin:cleanup_last_time', datetime.now().isoformat(timespec='seconds'))
+    print(f'定时清理完成：删除 {len(ids)} 条，备份 {backup_path}')
+
+
+def _cleanup_loop() -> None:
+    """后台循环：每 24 小时检查一次清理条件。"""
+    while True:
+        try:
+            _cleanup_once()
+        except Exception as e:  # noqa: BLE001 - 后台线程兜底，避免循环退出
+            print(f'定时清理异常：{e}')
+        time_module.sleep(24 * 3600)
 
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
