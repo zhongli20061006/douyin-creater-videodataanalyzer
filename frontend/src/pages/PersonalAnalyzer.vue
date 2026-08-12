@@ -27,6 +27,7 @@ interface PersonalData {
     total_comments: number
     total_shares: number
     total_plays: number
+    total_collects: number
     latest_sync: string | null
     engagement: {
       like_rate: number | null
@@ -43,6 +44,7 @@ interface PersonalData {
     like_count?: number
     comment_count?: number
     share_count?: number
+    collect_count?: number
     play_count?: number
     publish_time?: string | null
     crawl_time?: string | null
@@ -63,6 +65,7 @@ const interactionData = computed(() => {
     { name: '点赞', value: s.total_likes },
     { name: '评论', value: s.total_comments },
     { name: '分享', value: s.total_shares },
+    { name: '收藏', value: s.total_collects },
   ]
 })
 
@@ -157,6 +160,7 @@ const completenessFields = [
   { key: 'like', label: '点赞' },
   { key: 'comment', label: '评论' },
   { key: 'share', label: '分享' },
+  { key: 'collect', label: '收藏' },
   { key: 'publish_time', label: '发布时间' },
 ]
 
@@ -241,22 +245,28 @@ function fmtRate(v?: number | null) {
 
     <template v-if="data">
       <el-row :gutter="16">
-        <el-col :span="4">
+        <el-col :span="6">
           <StatCard title="视频数" :value="data.summary.total_videos" status="info" />
         </el-col>
-        <el-col :span="4">
+        <el-col :span="6">
           <StatCard title="总播放" :value="fmtNum(data.summary.total_plays)" status="info" />
         </el-col>
-        <el-col :span="4">
+        <el-col :span="6">
           <StatCard title="总点赞" :value="fmtNum(data.summary.total_likes)" status="success" />
         </el-col>
-        <el-col :span="4">
+        <el-col :span="6">
           <StatCard title="总评论" :value="fmtNum(data.summary.total_comments)" status="warning" />
         </el-col>
-        <el-col :span="4">
+      </el-row>
+
+      <el-row :gutter="16" style="margin-top: 12px">
+        <el-col :span="8">
           <StatCard title="总分享" :value="fmtNum(data.summary.total_shares)" status="info" />
         </el-col>
-        <el-col :span="4">
+        <el-col :span="8">
+          <StatCard title="总收藏" :value="fmtNum(data.summary.total_collects)" status="warning" />
+        </el-col>
+        <el-col :span="8">
           <StatCard title="最近同步" :value="fmtTime(data.summary.latest_sync)" status="info" />
         </el-col>
       </el-row>
@@ -324,6 +334,7 @@ function fmtRate(v?: number | null) {
               <el-option label="按播放" value="plays" />
               <el-option label="按评论" value="comments" />
               <el-option label="按分享" value="shares" />
+              <el-option label="按收藏" value="collects" />
               <el-option label="按互动率" value="engagement" />
             </el-select>
           </div>
@@ -342,6 +353,9 @@ function fmtRate(v?: number | null) {
           </el-table-column>
           <el-table-column label="分享" width="90">
             <template #default="{ row }">{{ fmtNum(row.share_count) }}</template>
+          </el-table-column>
+          <el-table-column label="收藏" width="90">
+            <template #default="{ row }">{{ fmtNum(row.collect_count) }}</template>
           </el-table-column>
           <el-table-column label="发布时间" width="150">
             <template #default="{ row }">{{ fmtTime(row.publish_time) }}</template>
