@@ -184,3 +184,36 @@ test('主页采集上报 ids 过滤上一页面的 hook 残留作者', async () 
     dom.window.close()
   }
 })
+
+test('unlimited 模式在别人主页采集时作者统一为页面主人', async () => {
+  const { dom, window, messages } = createPage()
+  try {
+    assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
+    // 模拟页面 RENDER_DATA：odin 为当前页面主人（非登录账号 u1）
+    const renderData = window.document.createElement('script')
+    renderData.id = 'RENDER_DATA'
+    renderData.textContent = encodeURIComponent(JSON.stringify({
+      app: { odin: { user_id: 'authorUid', nickname: '页面主人', sec_uid: 's1' } },
+    }))
+    window.document.body.appendChild(renderData)
+
+    const mainBtn = window.document.getElementById('dy-analyzer-start')
+    mainBtn.click()
+    assert.ok(await waitFor(() => (mainBtn.textContent || '').includes('2 条')))
+    window.document.getElementById('dy-analyzer-stop').click()
+    assert.ok(await waitFor(() => messages.some((m) => m.url.includes('/api/extension/videos'))))
+
+    const videoMsg = messages.find((m) => m.url.includes('/api/extension/videos'))
+    const body = JSON.parse(videoMsg.body)
+    assert.ok(body.videos.length >= 1)
+    for (const v of body.videos) {
+      assert.equal(v.author_id, 'authorUid')
+      assert.equal(v.author_name, '页面主人')
+    }
+    const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
+    assert.ok(idsMsg, '应有 ids 上报')
+    assert.equal(JSON.parse(idsMsg.body).author_id, 'authorUid')
+  } finally {
+    dom.window.close()
+  }
+})

@@ -75,6 +75,17 @@
     }
   }
 
+  /** 从 RENDER_DATA 读取「当前页面主人」（odin）身份；读取失败返回 null。 */
+  function readRenderDataOwner() {
+    const data = readRenderData();
+    const odin = data && data.app && data.app.odin;
+    if (!odin || !odin.user_id) return null;
+    return {
+      author_id: String(odin.user_id),
+      author_name: (odin.nickname || '').trim(),
+    };
+  }
+
   function handleHookData(json) {
     const records = P.parseAwemeList(json);
     for (const r of records) {
@@ -266,7 +277,11 @@
       return;
     }
     const cfg = await getConfig();
-    const author = { author_name: cfg.myNickname, author_id: cfg.myUid };
+    // 作者身份：limited 只用登录账号；unlimited 以「当前页面主人」为准（RENDER_DATA odin），失败才回退配置
+    const owner = complianceLimited
+      ? { author_name: cfg.myNickname, author_id: cfg.myUid }
+      : readRenderDataOwner() || { author_name: cfg.myNickname, author_id: cfg.myUid };
+    const author = owner;
     const scroller = P.findScrollContainer(root, document);
     console.log(
       '[dy-analyzer] 采集开始: scroller=',
@@ -342,7 +357,7 @@
       );
       const batchAuthorId = P.resolveAuthorId(
         [...hookMap.values()],
-        complianceLimited ? cfg.myUid : '',
+        owner.author_id,
         collected.map((c) => c.video_id),
       );
       const rejected = [];
