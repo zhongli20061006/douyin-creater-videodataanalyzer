@@ -114,6 +114,7 @@ const DETAIL_HTML = `
   <div data-e2e="video-player-digg"><div></div><div class="n1ekR9OB">4.0万</div></div>
   <div data-e2e="feed-comment-icon"><div></div><div class="cipURsys">481</div></div>
   <div data-e2e="video-player-share"><div></div><div class="mvwEat0w">1150</div></div>
+  <div data-e2e="video-player-collect"><div></div><div class="collect-num">3.2万</div></div>
 </div>
 `
 
@@ -124,6 +125,7 @@ test('parseVideoDetail 提取互动数据与作者 secUid', () => {
   assert.equal(detail.like_count, 40000)
   assert.equal(detail.comment_count, 481)
   assert.equal(detail.share_count, 1150)
+  assert.equal(detail.collect_count, 32000)
   assert.equal(detail.video_desc, '第262集：标题#历史')
   assert.equal(detail.video_url, 'https://www.douyin.com/video/7671480850864786742')
   assert.equal(detail.cover_url, 'https://p3-sign.douyinpic.com/poster.jpeg?x-signature=def')
@@ -148,6 +150,7 @@ test('parseVideoDetail 支持主页浮层 modal_id 场景', () => {
   })
   const detail = parseVideoDetail(dom.window.document)
   assert.equal(detail.video_id, '7669345637021002313')
+  assert.ok(detail.missing_fields.includes('collect_count'))
 })
 
 const AWEME_JSON = {
@@ -161,6 +164,7 @@ const AWEME_JSON = {
         comment_count: 481,
         share_count: 1150,
         play_count: 236,
+        collect_count: 6666,
       },
       author: { nickname: '黑白阿巴巴', uid: '4358913414407163', sec_uid: 'MS4wLjABAAAA_test' },
       video: { cover: { url_list: ['https://p3.douyinpic.com/coverA.jpeg'] } },
@@ -185,6 +189,7 @@ test('parseAwemeList 提取完整字段', () => {
   assert.equal(r0.like_count, 40000)
   assert.equal(r0.comment_count, 481)
   assert.equal(r0.share_count, 1150)
+  assert.equal(r0.collect_count, 6666)
   assert.equal(r0.author_name, '黑白阿巴巴')
   assert.equal(r0.author_id, '4358913414407163')
   assert.equal(r0.cover_url, 'https://p3.douyinpic.com/coverA.jpeg')
@@ -197,6 +202,7 @@ test('parseAwemeList 容错与详情结构', () => {
   assert.equal(r1.play_count, 0)
   assert.ok(r1.missing_fields.includes('video_title'))
   assert.ok(r1.missing_fields.includes('play_count'))
+  assert.ok(r1.missing_fields.includes('collect_count'))
   const detail = parseAwemeList({ aweme: { aweme_id: '123456789012345678', statistics: { play_count: 5 } } })
   assert.equal(detail.length, 1)
   assert.equal(detail[0].video_id, '123456789012345678')
@@ -228,13 +234,14 @@ test('mergeCardWithHook 用 hook 数据补全卡片', () => {
   }
   const hook = {
     video_id: '1', video_title: 'Hook标题', play_count: 236, like_count: 40000,
-    comment_count: 481, share_count: 1150, publish_time: '2026-05-12 14:13:52',
+    comment_count: 481, share_count: 1150, collect_count: 888, publish_time: '2026-05-12 14:13:52',
     cover_url: 'c2', missing_fields: [],
   }
   const merged = mergeCardWithHook(card, hook)
   assert.equal(merged.video_title, 'Hook标题')
   assert.equal(merged.play_count, 236)
   assert.equal(merged.like_count, 40000)
+  assert.equal(merged.collect_count, 888)
   assert.equal(merged.publish_time, '2026-05-12 14:13:52')
   assert.equal(merged.cover_url, 'c2')
   assert.deepEqual(mergeCardWithHook(card, null), card)
