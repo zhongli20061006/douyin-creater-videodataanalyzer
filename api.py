@@ -209,6 +209,7 @@ class VideoItem(BaseModel):
     like_count: Optional[int] = None
     comment_count: Optional[int] = None
     share_count: Optional[int] = None
+    collect_count: Optional[int] = None
     play_count: Optional[int] = None
     video_url: Optional[str] = None
     cover_url: Optional[str] = None
@@ -247,7 +248,7 @@ def list_videos(
 ):
     allowed_sort = {
         'video_id', 'video_title', 'author_name', 'publish_time',
-        'like_count', 'comment_count', 'share_count', 'play_count',
+        'like_count', 'comment_count', 'share_count', 'play_count', 'collect_count',
         'crawl_time', 'update_time',
     }
     if sort_by not in allowed_sort:

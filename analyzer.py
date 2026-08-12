@@ -36,7 +36,7 @@ def summarize_rows(rows: list[dict]) -> dict:
     ]
 
     completeness: dict = {}
-    for field in ('play_count', 'like_count', 'comment_count', 'share_count', 'publish_time'):
+    for field in ('play_count', 'like_count', 'comment_count', 'share_count', 'collect_count', 'publish_time'):
         if field == 'publish_time':
             missing = sum(1 for r in rows if not r.get(field))
         else:
@@ -54,6 +54,7 @@ def summarize_rows(rows: list[dict]) -> dict:
         'total_comments': total('comment_count'),
         'total_shares': total('share_count'),
         'total_plays': total('play_count'),
+        'total_collects': total('collect_count'),
         'latest_sync': max(sync_times) if sync_times else None,
         'engagement': {
             'like_rate': _rate(total('like_count'), total('play_count')),
@@ -100,6 +101,7 @@ SORT_KEYS = {
     'plays': 'play_count',
     'comments': 'comment_count',
     'shares': 'share_count',
+    'collects': 'collect_count',
 }
 
 

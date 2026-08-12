@@ -124,6 +124,10 @@
     const share_count = shareValue === null ? 0 : shareValue;
     if (shareValue === null) missing.push('share_count');
 
+    const collectValue = countIn(root.querySelector('[data-e2e="video-player-collect"]'));
+    const collect_count = collectValue === null ? 0 : collectValue;
+    if (collectValue === null) missing.push('collect_count');
+
     const descEl = root.querySelector('[data-e2e="video-desc"]');
     const video_desc = descEl ? (descEl.textContent || '').trim() : '';
     if (!video_desc) missing.push('video_desc');
@@ -152,6 +156,7 @@
       like_count: like_count,
       comment_count: comment_count,
       share_count: share_count,
+      collect_count: collect_count,
       play_count: null,
       publish_time: null,
       video_url: 'https://www.douyin.com/video/' + video_id,
@@ -202,6 +207,7 @@
       const like_count = numOf(stats.digg_count, 'like_count');
       const comment_count = numOf(stats.comment_count, 'comment_count');
       const share_count = numOf(stats.share_count, 'share_count');
+      const collect_count = numOf(stats.collect_count, 'collect_count');
 
       const author = aweme.author || {};
       const cover =
@@ -218,6 +224,7 @@
         like_count: like_count,
         comment_count: comment_count,
         share_count: share_count,
+        collect_count: collect_count,
         publish_time: aweme.create_time ? formatLocalTime(aweme.create_time) : null,
         cover_url: cover,
         author_name: author.nickname || '',
@@ -255,6 +262,7 @@
       like_count: hook.like_count,
       comment_count: hook.comment_count,
       share_count: hook.share_count,
+      collect_count: hook.collect_count,
       publish_time: hook.publish_time,
       cover_url: hook.cover_url || card.cover_url,
       author_name: hook.author_name || card.author_name,
@@ -312,10 +320,21 @@
     return fallback || '';
   }
 
+  /** 从 hook 记录中找与页面 sec_uid 匹配的真实作者（合拍/残留作者因 sec_uid 不同被排除）；无匹配返回 null。 */
+  function resolvePageOwnerFromHooks(hookRecords, pageSecUid) {
+    if (!pageSecUid) return null;
+    for (const r of hookRecords || []) {
+      if (r && r.author_id && r.sec_uid === pageSecUid) {
+        return { author_id: String(r.author_id), author_name: r.author_name || '' };
+      }
+    }
+    return null;
+  }
+
   const api = {
     parseCount, extractSecUidFromHref, parseProfileCards, parseVideoDetail,
     parseAwemeList, findScrollContainer, mergeCardWithHook, drainHookQueue,
-    idsFromBatch, progressLabel, resolveAuthorId,
+    idsFromBatch, progressLabel, resolveAuthorId, resolvePageOwnerFromHooks,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && !root.DouyinParse) root.DouyinParse = api;

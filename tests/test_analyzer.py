@@ -155,3 +155,28 @@ def test_top_videos_sort_by_engagement_puts_zero_play_last():
     ]
     top = top_videos(rows, limit=3, sort_by='engagement')
     assert [r['video_id'] for r in top] == ['a', 'c', 'b']
+
+
+def test_summarize_total_collects():
+    rows = [
+        make_row(video_id='1', collect_count=300),
+        make_row(video_id='2', collect_count=150),
+    ]
+    summary = summarize_rows(rows)
+    assert summary['total_collects'] == 450
+
+
+def test_summarize_collect_completeness():
+    rows = [
+        make_row(video_id='1', collect_count=0),
+        make_row(video_id='2', collect_count=200),
+        make_row(video_id='3', collect_count=None),
+    ]
+    c = summarize_rows(rows)['completeness']['collect']
+    assert c == {'missing': 2, 'total': 3, 'missing_rate': round(2 / 3, 4)}
+
+
+def test_top_videos_sort_by_collects():
+    rows = [make_row(video_id=str(i), collect_count=i * 3) for i in range(1, 12)]
+    top = top_videos(rows, limit=3, sort_by='collects')
+    assert [r['video_id'] for r in top] == ['11', '10', '9']

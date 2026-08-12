@@ -266,7 +266,8 @@
       return;
     }
     const cfg = await getConfig();
-    const author = { author_name: cfg.myNickname, author_id: cfg.myUid };
+    // 卡片解析用占位作者；真实归属在上报前统一确定（见 collectProfile 尾部）
+    const author = { author_name: '', author_id: '' };
     const scroller = P.findScrollContainer(root, document);
     console.log(
       '[dy-analyzer] 采集开始: scroller=',
@@ -340,11 +341,20 @@
         (sum, c) => sum + (c.missing_fields || []).length,
         0,
       );
-      const batchAuthorId = P.resolveAuthorId(
-        [...hookMap.values()],
-        complianceLimited ? cfg.myUid : '',
-        collected.map((c) => c.video_id),
-      );
+      // 主页采集归属：limited 或「自己主页」用登录配置；否则用 hook 中 sec_uid 匹配页面主人的真实作者
+      const pageSecUid = (collected[0] && collected[0].sec_uid) || '';
+      let owner;
+      if (complianceLimited || (pageSecUid && cfg.mySecUid === pageSecUid)) {
+        owner = { author_name: cfg.myNickname, author_id: cfg.myUid };
+      } else {
+        owner = P.resolvePageOwnerFromHooks([...hookMap.values()], pageSecUid)
+          || { author_name: '', author_id: '' };
+      }
+      for (const rec of collected) {
+        rec.author_id = owner.author_id;
+        rec.author_name = owner.author_name;
+      }
+      const batchAuthorId = owner.author_id;
       const rejected = [];
       for (let i = 0; i < collected.length; i += BATCH_SIZE) {
         const batch = collected.slice(i, i + BATCH_SIZE);

@@ -14,6 +14,7 @@ interface VideoItem {
   like_count?: number
   comment_count?: number
   share_count?: number
+  collect_count?: number
   play_count?: number
   video_url?: string | null
   cover_url?: string | null
@@ -46,6 +47,7 @@ const sortOptions = [
   { value: 'like_count', label: '点赞数' },
   { value: 'comment_count', label: '评论数' },
   { value: 'share_count', label: '分享数' },
+  { value: 'collect_count', label: '收藏数' },
   { value: 'play_count', label: '播放数' },
 ]
 
@@ -157,6 +159,9 @@ onMounted(load)
         <el-table-column label="分享" width="90">
           <template #default="{ row }">{{ fmtNum(row.share_count) }}</template>
         </el-table-column>
+        <el-table-column label="收藏" width="90">
+          <template #default="{ row }">{{ fmtNum(row.collect_count) }}</template>
+        </el-table-column>
         <el-table-column label="爬取时间" width="150">
           <template #default="{ row }">{{ fmtTime(row.crawl_time) }}</template>
         </el-table-column>
@@ -187,8 +192,8 @@ onMounted(load)
           <el-descriptions-item label="描述">{{ detail.video_desc || '--' }}</el-descriptions-item>
           <el-descriptions-item label="作者">{{ detail.author_name || '--' }} ({{ detail.author_id || '--' }})</el-descriptions-item>
           <el-descriptions-item label="发布时间">{{ fmtTime(detail.publish_time) }}</el-descriptions-item>
-          <el-descriptions-item label="点赞/评论/分享/播放">
-            {{ fmtNum(detail.like_count) }} / {{ fmtNum(detail.comment_count) }} / {{ fmtNum(detail.share_count) }} / {{ fmtNum(detail.play_count) }}
+          <el-descriptions-item label="点赞/评论/分享/收藏/播放">
+            {{ fmtNum(detail.like_count) }} / {{ fmtNum(detail.comment_count) }} / {{ fmtNum(detail.share_count) }} / {{ fmtNum(detail.collect_count) }} / {{ fmtNum(detail.play_count) }}
           </el-descriptions-item>
           <el-descriptions-item label="爬取/更新时间">{{ fmtTime(detail.crawl_time) }} / {{ fmtTime(detail.update_time) }}</el-descriptions-item>
           <el-descriptions-item label="视频链接">

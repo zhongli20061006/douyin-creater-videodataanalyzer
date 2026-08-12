@@ -109,3 +109,17 @@ def test_build_insert_params_normalizes_title():
     params = build_insert_params(item)
     assert params['video_title'] == '标题 第二行'
     assert params['video_desc'] == '描述'
+
+
+def test_build_insert_params_includes_collect_count_default_zero():
+    """兜底 item 未携带收藏时默认 0。"""
+    item = DouyinVideoItem(video_id='123', video_title='标题')
+    params = build_insert_params(item)
+    assert params['collect_count'] == 0
+
+
+def test_build_insert_params_keeps_collect_count():
+    """完整 item 的收藏值原样保留。"""
+    item = DouyinVideoItem(video_id='1', like_count=3, collect_count=88)
+    params = build_insert_params(item)
+    assert params['collect_count'] == 88

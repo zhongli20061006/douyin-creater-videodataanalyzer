@@ -20,10 +20,12 @@ class DouyinVideoItem(scrapy.Item):
     like_count = scrapy.Field()
     # 评论数
     comment_count = scrapy.Field()
-    # 分享/收藏数
+    # 分享数
     share_count = scrapy.Field()
     # 播放量
     play_count = scrapy.Field()
+    # 收藏数
+    collect_count = scrapy.Field()
     # 视频链接
     video_url = scrapy.Field()
     # 封面图链接
