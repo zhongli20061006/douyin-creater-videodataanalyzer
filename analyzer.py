@@ -67,6 +67,10 @@ def summarize_rows(rows: list[dict]) -> dict:
                 total('share_count'),
                 total('play_count') or total('like_count'),
             ),
+            'collect_rate': _rate(
+                total('collect_count'),
+                total('play_count') or total('like_count'),
+            ),
         },
         'completeness': completeness,
     }

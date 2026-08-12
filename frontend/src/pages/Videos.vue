@@ -37,9 +37,26 @@ const pageSize = ref(20)
 const search = ref('')
 const sortBy = ref('crawl_time')
 const order = ref('desc')
+const dateRange = ref<[string, string] | null>(null)
 const loading = ref(false)
 const drawer = ref(false)
 const detail = ref<VideoItem | null>(null)
+const cleanupEnabled = ref(false)
+const cleanupLoading = ref(false)
+const cleanupAuthors = ref<string[]>([])
+const cleanupBatchSize = ref(200)
+const authorOptions = ref<Array<{ author_id: string; author_name: string }>>([])
+
+const dateShortcuts = [
+  {
+    text: '本月',
+    value: () => {
+      const now = new Date()
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      return [start, now]
+    },
+  },
+]
 
 const sortOptions = [
   { value: 'crawl_time', label: '爬取时间' },
@@ -61,6 +78,8 @@ async function load() {
         search: search.value,
         sort_by: sortBy.value,
         order: order.value,
+        start_date: dateRange.value ? dateRange.value[0] : undefined,
+        end_date: dateRange.value ? dateRange.value[1] : undefined,
       },
     })
     rows.value = res.data.data
@@ -117,12 +136,65 @@ async function removeRow(row: VideoItem) {
   }
 }
 
-onMounted(load)
+async function loadCleanupStatus() {
+  try {
+    const res = await api.get<{ enabled: boolean; batch_size: number; authors: string[] }>('/cleanup/status')
+    cleanupEnabled.value = res.data.enabled
+    cleanupBatchSize.value = res.data.batch_size
+    cleanupAuthors.value = res.data.authors
+  } catch { /* 开关状态加载失败不阻塞页面 */ }
+  try {
+    const authorsRes = await api.get<{ authors: Array<{ author_id: string; author_name: string }> }>('/analyze/authors')
+    authorOptions.value = authorsRes.data.authors ?? []
+  } catch { /* 作者列表加载失败不阻塞页面 */ }
+}
+
+async function toggleCleanup(val: boolean) {
+  cleanupLoading.value = true
+  try {
+    await api.post('/cleanup/toggle', { enabled: val })
+    ElMessage.success(val ? '定时清理已开启' : '定时清理已关闭')
+  } catch (e: any) {
+    cleanupEnabled.value = !val
+    ElMessage.error(e?.response?.data?.detail || e?.message || '切换失败')
+  } finally {
+    cleanupLoading.value = false
+  }
+}
+
+async function saveCleanupSettings() {
+  try {
+    await api.post('/cleanup/settings', {
+      batch_size: cleanupBatchSize.value,
+      authors: cleanupAuthors.value,
+    })
+    ElMessage.success('清理设置已保存')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '保存设置失败')
+  }
+}
+
+onMounted(() => {
+  load()
+  loadCleanupStatus()
+})
 </script>
 
 <template>
   <div class="videos">
     <el-card shadow="never" class="v-card toolbar">
+      <el-date-picker
+        v-model="dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        range-separator="至"
+        start-placeholder="开始日期"
+        end-placeholder="结束日期"
+        :shortcuts="dateShortcuts"
+        style="max-width: 300px"
+        clearable
+        @change="doSearch"
+      />
       <el-input
         v-model="search"
         placeholder="搜索视频ID / 标题 / 作者"
@@ -140,6 +212,42 @@ onMounted(load)
         <el-option label="升序" value="asc" />
       </el-select>
       <el-button :loading="loading" @click="load">刷新</el-button>
+    </el-card>
+
+    <el-card shadow="never" class="v-card">
+      <template #header>
+        <span>定时清理</span>
+      </template>
+      <div class="cleanup-panel">
+        <div class="cleanup-row">
+          <span>开关</span>
+          <el-switch v-model="cleanupEnabled" :loading="cleanupLoading" @change="toggleCleanup" />
+        </div>
+        <div class="cleanup-row">
+          <span>每次删除条数</span>
+          <el-input-number v-model="cleanupBatchSize" :min="1" :max="1000" :step="50" @change="saveCleanupSettings" />
+        </div>
+        <div class="cleanup-row">
+          <span>作者范围（不选=全部作者）</span>
+          <el-select
+            v-model="cleanupAuthors"
+            multiple
+            filterable
+            clearable
+            collapse-tags
+            placeholder="全部作者"
+            style="width: 320px"
+            @change="saveCleanupSettings"
+          >
+            <el-option
+              v-for="a in authorOptions"
+              :key="a.author_id"
+              :label="`${a.author_name || a.author_id}`"
+              :value="a.author_id"
+            />
+          </el-select>
+        </div>
+      </div>
     </el-card>
 
     <el-card shadow="never" class="v-card">
@@ -223,6 +331,18 @@ onMounted(load)
   border: 1px solid var(--spider-border);
   border-radius: var(--radius-md);
   margin-bottom: var(--space-section);
+}
+.cleanup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cleanup-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--spider-text-secondary);
+  font-size: 13px;
 }
 .toolbar :deep(.el-card__body) {
   display: flex;
