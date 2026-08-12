@@ -12,6 +12,7 @@ const {
   parseAwemeList,
   findScrollContainer,
   mergeCardWithHook,
+  resolvePageOwnerFromHooks,
   drainHookQueue,
   idsFromBatch,
   progressLabel,
@@ -245,6 +246,25 @@ test('mergeCardWithHook 用 hook 数据补全卡片', () => {
   assert.equal(merged.publish_time, '2026-05-12 14:13:52')
   assert.equal(merged.cover_url, 'c2')
   assert.deepEqual(mergeCardWithHook(card, null), card)
+})
+
+test('resolvePageOwnerFromHooks 匹配页面 sec_uid 的真实作者', () => {
+  const hooks = [
+    { video_id: '1', author_id: 'coauthorUid', author_name: '合拍对方', sec_uid: 'MS4wLjABAAAA_co' },
+    { video_id: '2', author_id: 'authorUid', author_name: '页面主人', sec_uid: 'MS4wLjABAAAA_test' },
+  ]
+  assert.deepEqual(resolvePageOwnerFromHooks(hooks, 'MS4wLjABAAAA_test'), {
+    author_id: 'authorUid',
+    author_name: '页面主人',
+  })
+})
+
+test('resolvePageOwnerFromHooks 无匹配或空参数返回 null', () => {
+  assert.equal(resolvePageOwnerFromHooks([], 'x'), null)
+  assert.equal(resolvePageOwnerFromHooks([{ author_id: 'a', sec_uid: 'y' }], 'x'), null)
+  assert.equal(resolvePageOwnerFromHooks(undefined, 'x'), null)
+  assert.equal(resolvePageOwnerFromHooks([{ author_id: '', sec_uid: 'x' }], 'x'), null)
+  assert.equal(resolvePageOwnerFromHooks([{ author_id: 'a', sec_uid: 'x' }], ''), null)
 })
 
 test('drainHookQueue 回放并清空缓冲', () => {

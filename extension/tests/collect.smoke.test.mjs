@@ -104,7 +104,7 @@ test('主页采集显示实时计数并可手动停止，数据与 id 照常上�
   }
 })
 
-test('unlimited 无 RENDER_DATA 时主页采集作者回退登录配置', async () => {
+test('unlimited 模式页面主人通过 hook sec_uid 匹配', async () => {
   const { dom, window, messages } = createPage()
   try {
     assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
@@ -130,14 +130,19 @@ test('unlimited 无 RENDER_DATA 时主页采集作者回退登录配置', async 
     assert.ok(await waitFor(() => messages.some((m) => m.url.includes('/api/extension/ids'))))
     const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
     const body = JSON.parse(idsMsg.body)
-    // 页面无 RENDER_DATA：归属回退登录配置 u1，而非 hook 里的真实作者
-    assert.equal(body.author_id, 'u1')
+    // hook 中 sec_uid 与页面卡片一致的记录即页面主人
+    assert.equal(body.author_id, 'realAuthorUid')
+    const videoMsg = messages.find((m) => m.url.includes('/api/extension/videos'))
+    const vbody = JSON.parse(videoMsg.body)
+    for (const v of vbody.videos) {
+      assert.equal(v.author_id, 'realAuthorUid')
+    }
   } finally {
     dom.window.close()
   }
 })
 
-test('unlimited 模式 ids 作者不受跨页面 hook 残留影响', async () => {
+test('跨页面 hook 残留不影响页面主人解析', async () => {
   const { dom, window, messages } = createPage()
   try {
     assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
@@ -180,8 +185,8 @@ test('unlimited 模式 ids 作者不受跨页面 hook 残留影响', async () =>
     assert.ok(await waitFor(() => messages.some((m) => m.url.includes('/api/extension/ids'))))
     const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
     const body = JSON.parse(idsMsg.body)
-    // 归属以页面主人为准（无 RENDER_DATA 时回退 u1），残留 hook 不参与
-    assert.equal(body.author_id, 'u1')
+    // 残留作者 sec_uid 与页面不一致，被排除；当前页作者 myUid 胜出
+    assert.equal(body.author_id, 'myUid')
   } finally {
     dom.window.close()
   }
@@ -191,13 +196,21 @@ test('unlimited 模式在别人主页采集时作者统一为页面主人', asyn
   const { dom, window, messages } = createPage()
   try {
     assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
-    // 模拟页面 RENDER_DATA：odin 为当前页面主人（非登录账号 u1）
-    const renderData = window.document.createElement('script')
-    renderData.id = 'RENDER_DATA'
-    renderData.textContent = encodeURIComponent(JSON.stringify({
-      app: { odin: { user_id: 'authorUid', nickname: '页面主人', sec_uid: 's1' } },
+    const hookJson = {
+      aweme_list: [
+        {
+          aweme_id: '7672018085449279859',
+          desc: '标题A',
+          create_time: 1700000000,
+          statistics: { play_count: 236 },
+          author: { uid: 'authorUid', sec_uid: 'MS4wLjABAAAA_test', nickname: '页面主人' },
+          video: { cover: { url_list: ['https://p3.douyinpic.com/coverA.jpeg'] } },
+        },
+      ],
+    }
+    window.document.dispatchEvent(new window.CustomEvent('dy-analyzer-data', {
+      detail: JSON.stringify({ source: 'dy-analyzer-hook', data: hookJson }),
     }))
-    window.document.body.appendChild(renderData)
 
     const mainBtn = window.document.getElementById('dy-analyzer-start')
     mainBtn.click()
@@ -224,12 +237,6 @@ test('unlimited 模式合拍视频的作者仍归页面主人', async () => {
   const { dom, window, messages } = createPage()
   try {
     assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
-    const renderData = window.document.createElement('script')
-    renderData.id = 'RENDER_DATA'
-    renderData.textContent = encodeURIComponent(JSON.stringify({
-      app: { odin: { user_id: 'authorUid', nickname: '页面主人', sec_uid: 's1' } },
-    }))
-    window.document.body.appendChild(renderData)
     // hook：一条合拍视频 author 为对方，一条普通视频 author 为页面主人
     const hookJson = {
       aweme_list: [
@@ -270,6 +277,39 @@ test('unlimited 模式合拍视频的作者仍归页面主人', async () => {
     const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
     assert.ok(idsMsg, '应有 ids 上报')
     assert.equal(JSON.parse(idsMsg.body).author_id, 'authorUid')
+  } finally {
+    dom.window.close()
+  }
+})
+
+test('自己主页采集时作者使用登录配置（昵称齐全）', async () => {
+  const { dom, window, messages } = createPage()
+  try {
+    // 覆盖 storage：mySecUid 与页面卡片 sec_uid 一致（自己主页）
+    window.chrome.storage.local.get = (_keys, cb) => cb({
+      backendBaseUrl: 'http://127.0.0.1:8001',
+      myUid: 'myUid',
+      mySecUid: 'MS4wLjABAAAA_test',
+      myNickname: '我自己',
+      complianceMode: 'unlimited',
+      apiToken: 'test-token',
+    })
+    assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
+    const mainBtn = window.document.getElementById('dy-analyzer-start')
+    mainBtn.click()
+    assert.ok(await waitFor(() => (mainBtn.textContent || '').includes('2 条')))
+    window.document.getElementById('dy-analyzer-stop').click()
+    assert.ok(await waitFor(() => messages.some((m) => m.url.includes('/api/extension/videos'))))
+
+    const videoMsg = messages.find((m) => m.url.includes('/api/extension/videos'))
+    const body = JSON.parse(videoMsg.body)
+    for (const v of body.videos) {
+      assert.equal(v.author_id, 'myUid')
+      assert.equal(v.author_name, '我自己')
+    }
+    const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
+    assert.ok(idsMsg, '应有 ids 上报')
+    assert.equal(JSON.parse(idsMsg.body).author_id, 'myUid')
   } finally {
     dom.window.close()
   }

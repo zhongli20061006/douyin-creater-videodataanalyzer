@@ -75,17 +75,6 @@
     }
   }
 
-  /** 从 RENDER_DATA 读取「当前页面主人」（odin）身份；读取失败返回 null。 */
-  function readRenderDataOwner() {
-    const data = readRenderData();
-    const odin = data && data.app && data.app.odin;
-    if (!odin || !odin.user_id) return null;
-    return {
-      author_id: String(odin.user_id),
-      author_name: (odin.nickname || '').trim(),
-    };
-  }
-
   function handleHookData(json) {
     const records = P.parseAwemeList(json);
     for (const r of records) {
@@ -277,11 +266,8 @@
       return;
     }
     const cfg = await getConfig();
-    // 作者身份：limited 只用登录账号；unlimited 以「当前页面主人」为准（RENDER_DATA odin），失败才回退配置
-    const owner = complianceLimited
-      ? { author_name: cfg.myNickname, author_id: cfg.myUid }
-      : readRenderDataOwner() || { author_name: cfg.myNickname, author_id: cfg.myUid };
-    const author = owner;
+    // 卡片解析用占位作者；真实归属在上报前统一确定（见 collectProfile 尾部）
+    const author = { author_name: '', author_id: '' };
     const scroller = P.findScrollContainer(root, document);
     console.log(
       '[dy-analyzer] 采集开始: scroller=',
@@ -315,9 +301,6 @@
             seen.add(card.video_id);
             // hook 数据优先补全（互动/发布时间），DOM 卡片兜底
             const merged = P.mergeCardWithHook(card, hookMap.get(card.video_id));
-            // 主页采集归属：一律归页面主人（含合拍/转载视频），hook 只补数据不改归属
-            merged.author_id = owner.author_id;
-            merged.author_name = owner.author_name;
             collected.push(merged);
             added += 1;
           }
@@ -358,6 +341,19 @@
         (sum, c) => sum + (c.missing_fields || []).length,
         0,
       );
+      // 主页采集归属：limited 或「自己主页」用登录配置；否则用 hook 中 sec_uid 匹配页面主人的真实作者
+      const pageSecUid = (collected[0] && collected[0].sec_uid) || '';
+      let owner;
+      if (complianceLimited || (pageSecUid && cfg.mySecUid === pageSecUid)) {
+        owner = { author_name: cfg.myNickname, author_id: cfg.myUid };
+      } else {
+        owner = P.resolvePageOwnerFromHooks([...hookMap.values()], pageSecUid)
+          || { author_name: '', author_id: '' };
+      }
+      for (const rec of collected) {
+        rec.author_id = owner.author_id;
+        rec.author_name = owner.author_name;
+      }
       const batchAuthorId = owner.author_id;
       const rejected = [];
       for (let i = 0; i < collected.length; i += BATCH_SIZE) {

@@ -320,10 +320,21 @@
     return fallback || '';
   }
 
+  /** 从 hook 记录中找与页面 sec_uid 匹配的真实作者（合拍/残留作者因 sec_uid 不同被排除）；无匹配返回 null。 */
+  function resolvePageOwnerFromHooks(hookRecords, pageSecUid) {
+    if (!pageSecUid) return null;
+    for (const r of hookRecords || []) {
+      if (r && r.author_id && r.sec_uid === pageSecUid) {
+        return { author_id: String(r.author_id), author_name: r.author_name || '' };
+      }
+    }
+    return null;
+  }
+
   const api = {
     parseCount, extractSecUidFromHref, parseProfileCards, parseVideoDetail,
     parseAwemeList, findScrollContainer, mergeCardWithHook, drainHookQueue,
-    idsFromBatch, progressLabel, resolveAuthorId,
+    idsFromBatch, progressLabel, resolveAuthorId, resolvePageOwnerFromHooks,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && !root.DouyinParse) root.DouyinParse = api;
