@@ -432,6 +432,42 @@ def get_queue_items(limit: int = Query(50, ge=1, le=200)):
     return {'queue_length': length, 'items': items}
 
 
+class QueueRemoveRequest(BaseModel):
+    video_ids: list[str]
+
+
+@app.post('/api/queue/clear', dependencies=[Depends(verify_write_guard)])
+def queue_clear():
+    """清空 Redis 爬虫队列。"""
+    try:
+        r = get_redis()
+        r.delete(REDIS_START_URLS_KEY)
+    except redis.ConnectionError:
+        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return {'cleared': True}
+
+
+@app.post('/api/queue/remove', dependencies=[Depends(verify_write_guard)])
+def queue_remove(req: QueueRemoveRequest):
+    """按 video_id 批量移除队列条目（保序重建）。"""
+    cleaned = [vid.strip() for vid in req.video_ids if vid and vid.strip()]
+    if not cleaned:
+        raise HTTPException(status_code=400, detail='没有合法的 video_id')
+    try:
+        r = get_redis()
+        raws = r.lrange(REDIS_START_URLS_KEY, 0, -1)
+        kept = queue_service.remove_items(raws, cleaned)
+        removed = len(raws) - len(kept)
+        if removed:
+            r.delete(REDIS_START_URLS_KEY)
+            if kept:
+                r.rpush(REDIS_START_URLS_KEY, *kept)
+        queue_length = r.llen(REDIS_START_URLS_KEY)
+    except redis.ConnectionError:
+        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return {'removed': removed, 'queue_length': queue_length}
+
+
 # ── Spider Control ──
 
 @app.post('/api/spider/start', dependencies=[Depends(verify_write_guard)])

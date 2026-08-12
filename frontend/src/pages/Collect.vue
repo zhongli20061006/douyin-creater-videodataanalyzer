@@ -70,7 +70,9 @@ async function pushIds() {
   try {
     const res = await api.post('/crawl', { video_ids: parsed.value.valid, task_type: 'video' })
     queueLength.value = res.data.queue_length
-    ElMessage.success(`已加入 ${res.data.pushed} 条，当前队列 ${res.data.queue_length} 条`)
+    ElMessage.success(
+      `已加入 ${res.data.pushed} 条（跳过已采集 ${res.data.skipped ?? 0}），当前队列 ${res.data.queue_length} 条`,
+    )
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || e?.message || '加入队列失败')
   } finally {
@@ -125,7 +127,9 @@ async function pushToQueue() {
   try {
     const res = await api.post('/crawl', { video_ids: ids, task_type: 'video' })
     collectQueueLength.value = res.data.queue_length
-    ElMessage.success(`已加入 ${res.data.pushed} 条，当前队列 ${res.data.queue_length} 条`)
+    ElMessage.success(
+      `已加入 ${res.data.pushed} 条（跳过已采集 ${res.data.skipped ?? 0}），当前队列 ${res.data.queue_length} 条`,
+    )
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || e?.message || '加入队列失败')
   } finally {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import api from '../api'
 
@@ -22,6 +22,7 @@ const logs = ref<string[]>([])
 const loading = ref(false)
 const starting = ref(false)
 const stopping = ref(false)
+const selectedItems = ref<QueueItem[]>([])
 let timer: number | null = null
 
 async function load() {
@@ -70,6 +71,44 @@ async function stopSpider() {
     ElMessage.error(e?.response?.data?.detail || e?.message || '停止失败')
   } finally {
     stopping.value = false
+  }
+}
+
+function onSelectionChange(rows: QueueItem[]) {
+  selectedItems.value = rows
+}
+
+async function removeSelected() {
+  const ids = selectedItems.value.map((i) => videoId(i.url))
+  if (!ids.length) {
+    ElMessage.warning('请先勾选要移除的任务')
+    return
+  }
+  try {
+    await api.post('/queue/remove', { video_ids: ids })
+    ElMessage.success(`已移除 ${ids.length} 条`)
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '移除失败')
+  }
+}
+
+async function clearQueue() {
+  try {
+    await ElMessageBox.confirm('确定清空整个爬虫队列吗？该操作不可恢复。', '清空队列', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await api.post('/queue/clear')
+    ElMessage.success('队列已清空')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '清空失败')
   }
 }
 
@@ -137,10 +176,19 @@ onBeforeUnmount(() => {
       <template #header>
         <div class="q-header">
           <span>队列内容（每 5 秒自动刷新）</span>
-          <el-button size="small" :loading="loading" @click="load">刷新</el-button>
+          <div>
+            <el-button size="small" :disabled="!selectedItems.length" @click="removeSelected">
+              移除选中
+            </el-button>
+            <el-button size="small" type="danger" :disabled="!queueLength" @click="clearQueue">
+              清空队列
+            </el-button>
+            <el-button size="small" :loading="loading" @click="load">刷新</el-button>
+          </div>
         </div>
       </template>
-      <el-table :data="items" size="small" max-height="360">
+      <el-table :data="items" size="small" max-height="360" @selection-change="onSelectionChange">
+        <el-table-column type="selection" width="46" />
         <el-table-column type="index" label="#" width="50" />
         <el-table-column label="视频ID" width="220">
           <template #default="{ row }">{{ videoId(row.url) }}</template>
