@@ -315,6 +315,9 @@
             seen.add(card.video_id);
             // hook 数据优先补全（互动/发布时间），DOM 卡片兜底
             const merged = P.mergeCardWithHook(card, hookMap.get(card.video_id));
+            // 主页采集归属：一律归页面主人（含合拍/转载视频），hook 只补数据不改归属
+            merged.author_id = owner.author_id;
+            merged.author_name = owner.author_name;
             collected.push(merged);
             added += 1;
           }
@@ -355,11 +358,7 @@
         (sum, c) => sum + (c.missing_fields || []).length,
         0,
       );
-      const batchAuthorId = P.resolveAuthorId(
-        [...hookMap.values()],
-        owner.author_id,
-        collected.map((c) => c.video_id),
-      );
+      const batchAuthorId = owner.author_id;
       const rejected = [];
       for (let i = 0; i < collected.length; i += BATCH_SIZE) {
         const batch = collected.slice(i, i + BATCH_SIZE);

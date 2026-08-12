@@ -104,7 +104,7 @@ test('主页采集显示实时计数并可手动停止，数据与 id 照常上�
   }
 })
 
-test('主页采集上报 ids 使用 hook 真实作者', async () => {
+test('unlimited 无 RENDER_DATA 时主页采集作者回退登录配置', async () => {
   const { dom, window, messages } = createPage()
   try {
     assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
@@ -130,13 +130,14 @@ test('主页采集上报 ids 使用 hook 真实作者', async () => {
     assert.ok(await waitFor(() => messages.some((m) => m.url.includes('/api/extension/ids'))))
     const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
     const body = JSON.parse(idsMsg.body)
-    assert.equal(body.author_id, 'realAuthorUid')
+    // 页面无 RENDER_DATA：归属回退登录配置 u1，而非 hook 里的真实作者
+    assert.equal(body.author_id, 'u1')
   } finally {
     dom.window.close()
   }
 })
 
-test('主页采集上报 ids 过滤上一页面的 hook 残留作者', async () => {
+test('unlimited 模式 ids 作者不受跨页面 hook 残留影响', async () => {
   const { dom, window, messages } = createPage()
   try {
     assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
@@ -179,7 +180,8 @@ test('主页采集上报 ids 过滤上一页面的 hook 残留作者', async () 
     assert.ok(await waitFor(() => messages.some((m) => m.url.includes('/api/extension/ids'))))
     const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
     const body = JSON.parse(idsMsg.body)
-    assert.equal(body.author_id, 'myUid')
+    // 归属以页面主人为准（无 RENDER_DATA 时回退 u1），残留 hook 不参与
+    assert.equal(body.author_id, 'u1')
   } finally {
     dom.window.close()
   }
@@ -206,6 +208,61 @@ test('unlimited 模式在别人主页采集时作者统一为页面主人', asyn
     const videoMsg = messages.find((m) => m.url.includes('/api/extension/videos'))
     const body = JSON.parse(videoMsg.body)
     assert.ok(body.videos.length >= 1)
+    for (const v of body.videos) {
+      assert.equal(v.author_id, 'authorUid')
+      assert.equal(v.author_name, '页面主人')
+    }
+    const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
+    assert.ok(idsMsg, '应有 ids 上报')
+    assert.equal(JSON.parse(idsMsg.body).author_id, 'authorUid')
+  } finally {
+    dom.window.close()
+  }
+})
+
+test('unlimited 模式合拍视频的作者仍归页面主人', async () => {
+  const { dom, window, messages } = createPage()
+  try {
+    assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
+    const renderData = window.document.createElement('script')
+    renderData.id = 'RENDER_DATA'
+    renderData.textContent = encodeURIComponent(JSON.stringify({
+      app: { odin: { user_id: 'authorUid', nickname: '页面主人', sec_uid: 's1' } },
+    }))
+    window.document.body.appendChild(renderData)
+    // hook：一条合拍视频 author 为对方，一条普通视频 author 为页面主人
+    const hookJson = {
+      aweme_list: [
+        {
+          aweme_id: '7672018085449279859',
+          desc: '合拍视频',
+          create_time: 1700000000,
+          statistics: { play_count: 236, collect_count: 66 },
+          author: { uid: 'coauthorUid', sec_uid: 'MS4wLjABAAAA_co', nickname: '合拍对方' },
+          video: { cover: { url_list: ['https://p3.douyinpic.com/coverCo.jpeg'] } },
+        },
+        {
+          aweme_id: '7672018085449279860',
+          desc: '普通视频',
+          create_time: 1700000000,
+          statistics: { play_count: 481, collect_count: 88 },
+          author: { uid: 'authorUid', sec_uid: 'MS4wLjABAAAA_test', nickname: '页面主人' },
+          video: { cover: { url_list: ['https://p3.douyinpic.com/coverA.jpeg'] } },
+        },
+      ],
+    }
+    window.document.dispatchEvent(new window.CustomEvent('dy-analyzer-data', {
+      detail: JSON.stringify({ source: 'dy-analyzer-hook', data: hookJson }),
+    }))
+    const mainBtn = window.document.getElementById('dy-analyzer-start')
+    mainBtn.click()
+    assert.ok(await waitFor(() => (mainBtn.textContent || '').includes('2 条')))
+    window.document.getElementById('dy-analyzer-stop').click()
+    assert.ok(await waitFor(() => messages.some((m) => m.url.includes('/api/extension/videos'))))
+
+    const videoMsg = messages.find((m) => m.url.includes('/api/extension/videos'))
+    const body = JSON.parse(videoMsg.body)
+    assert.equal(body.videos.length, 2)
     for (const v of body.videos) {
       assert.equal(v.author_id, 'authorUid')
       assert.equal(v.author_name, '页面主人')
