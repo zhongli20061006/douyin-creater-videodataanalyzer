@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { BarChart } from 'echarts/charts'
+import { GridComponent, TitleComponent, TooltipComponent } from 'echarts/components'
+import { use } from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
+import VChart from 'vue-echarts'
 
 import api from '../api'
 import StatCard from '../components/StatCard.vue'
-import PieChart from '../components/PieChart.vue'
 import { useApi } from '../composables/useApi'
+
+use([BarChart, TitleComponent, TooltipComponent, GridComponent, CanvasRenderer])
 
 interface Stats {
   total_videos: number
@@ -26,28 +32,40 @@ const authors = useApi<{ authors: AuthorDist[] }>(() =>
   api.get('/stats/authors').then((r) => r.data),
 )
 
-interface QualityReport {
-  summary: {
-    issue_counts: Record<string, number>
-  }
-}
+const TOP_AUTHORS = 15
+// 水平条形图：升序排列让视频数最多的作者显示在最上方
+const authorBarData = computed(() =>
+  (authors.data.value?.authors ?? []).slice(0, TOP_AUTHORS).sort((a, b) => a.value - b.value),
+)
 
-const ISSUE_LABELS: Record<string, string> = {
-  empty: '疑似无效',
-  placeholder: '占位页',
-  stale: '陈旧未更新',
-  missing_author: '作者缺失',
-}
-
-const quality = useApi<QualityReport>(() => api.get('/quality/report').then((r) => r.data))
-
-const authorPieData = computed(() => authors.data.value?.authors ?? [])
-const qualityPieData = computed(() => {
-  const counts = quality.data.value?.summary.issue_counts ?? {}
-  return Object.entries(counts)
-    .filter(([, v]) => v > 0)
-    .map(([k, v]) => ({ name: ISSUE_LABELS[k] || k, value: v }))
-})
+const authorBarOption = computed(() => ({
+  title: {
+    text: `作者贡献度（视频数 Top ${TOP_AUTHORS}）`,
+    left: 'center',
+    textStyle: { color: '#e5e7eb', fontSize: 14 },
+  },
+  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+  grid: { left: 100, right: 56, top: 44, bottom: 24 },
+  xAxis: {
+    type: 'value',
+    axisLabel: { color: '#9ca3af' },
+  },
+  yAxis: {
+    type: 'category',
+    data: authorBarData.value.map((d) => d.name),
+    axisLabel: { color: '#9ca3af' },
+  },
+  series: [
+    {
+      name: '视频数',
+      type: 'bar',
+      barMaxWidth: 18,
+      itemStyle: { color: '#409eff', borderRadius: [0, 4, 4, 0] },
+      label: { show: true, position: 'right', color: '#9ca3af', formatter: '{c}' },
+      data: authorBarData.value.map((d) => d.value),
+    },
+  ],
+}))
 
 function fmtTime(t: string | null) {
   if (!t) return '--'
@@ -72,18 +90,9 @@ function fmtTime(t: string | null) {
         <StatCard title="最近爬取" :value="fmtTime(data?.latest_crawl ?? null)" status="info" />
       </el-col>
     </el-row>
-    <el-row :gutter="16">
-      <el-col :span="12">
-        <el-card shadow="never" class="chart-card">
-          <PieChart title="作者视频分布" :data="authorPieData" />
-        </el-card>
-      </el-col>
-      <el-col :span="12">
-        <el-card shadow="never" class="chart-card">
-          <PieChart title="数据质量问题分布" :data="qualityPieData" />
-        </el-card>
-      </el-col>
-    </el-row>
+    <el-card shadow="never" class="chart-card">
+      <v-chart :option="authorBarOption" autoresize style="height: 480px" />
+    </el-card>
     <el-button v-if="loading" loading style="margin-top: 16px">加载中</el-button>
     <el-button v-else style="margin-top: 16px" @click="run">刷新</el-button>
   </div>

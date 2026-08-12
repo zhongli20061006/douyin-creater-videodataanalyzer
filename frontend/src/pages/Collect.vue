@@ -11,7 +11,7 @@ interface PreviewVideo {
   author_name: string
 }
 
-const activeTab = ref('paste')
+const activeTab = ref('idsfile')
 
 watch(activeTab, (tab) => {
   if (tab === 'idsfile') loadIdsFile()
@@ -304,7 +304,84 @@ async function copyIdsFile() {
   <div class="collect">
     <el-tabs v-model="activeTab">
       <!-- 正式入口：粘贴 / 导入 -->
-      <el-tab-pane label="粘贴 / 导入视频 ID" name="paste">
+      <el-tab-pane label="插件 ID 导入与管理" name="idsfile">
+        <el-card shadow="never" class="collect-card">
+          <div class="paste-actions">
+            <span class="ids-count">共 {{ idsCount }} 条（待采集 {{ pendingCount }} / 已采集 {{ doneCount }}）</span>
+            <el-select v-model="authorFilter" size="small" style="width: 160px" placeholder="按作者筛选">
+              <el-option label="全部作者" value="all" />
+              <el-option v-for="opt in authorOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+            </el-select>
+            <el-select v-model="statusFilter" size="small" style="width: 120px" placeholder="按状态筛选">
+              <el-option label="全部状态" value="all" />
+              <el-option label="待采集" value="pending" />
+              <el-option label="已采集" value="done" />
+            </el-select>
+            <el-button size="small" :loading="idsLoading" @click="loadIdsFile">刷新</el-button>
+            <el-button size="small" type="primary" :loading="idsSaving" :disabled="!idsItems.length" @click="saveIdsFile">
+              保存到文件
+            </el-button>
+            <el-button size="small" type="success" :loading="idsImporting" :disabled="!idsItems.length" @click="importIdsFile">
+              导入爬虫队列
+            </el-button>
+            <el-button size="small" :disabled="!idsItems.length" @click="copyIdsFile">复制全部</el-button>
+          </div>
+          <div class="paste-actions" style="margin-top: 12px">
+            <el-input
+              v-model="newIdsText"
+              size="small"
+              placeholder="粘贴新增 ID（每行/逗号/空格分隔）"
+              clearable
+              style="max-width: 420px"
+            />
+            <el-button size="small" @click="addNewIds">新增</el-button>
+            <el-button size="small" :disabled="!selectedIds.length" @click="batchSetStatus('pending')">
+              批量待采集
+            </el-button>
+            <el-button size="small" :disabled="!selectedIds.length" @click="batchSetStatus('done')">
+              批量已采集
+            </el-button>
+            <el-button size="small" type="danger" :disabled="!selectedIds.length" @click="batchDelete">
+              批量删除
+            </el-button>
+          </div>
+          <el-table
+            :data="filteredItems"
+            size="small"
+            max-height="480"
+            style="margin-top: 12px"
+            @selection-change="onIdsSelectionChange"
+          >
+            <el-table-column type="selection" width="46" />
+            <el-table-column prop="video_id" label="视频ID" width="210" />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'done' ? 'success' : 'warning'" size="small">
+                  {{ row.status === 'done' ? '已采集' : '待采集' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="作者" width="140">
+              <template #default="{ row }">{{ row.author_name || row.author_id || '未知' }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="150">
+              <template #default="{ row }">
+                <el-button size="small" link type="primary" @click="toggleStatus(row)">
+                  {{ row.status === 'done' ? '改为待采集' : '标记已采集' }}
+                </el-button>
+                <el-button size="small" link type="danger" @click="removeRow(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-alert
+            type="info"
+            :closable="false"
+            title="插件采集自动追加 ID（带作者）到该文件；「保存到文件」覆盖写入并保留状态/作者；「导入爬虫队列」只推待采集 ID；「改为待采集」可强制重爬。"
+            style="margin-top: 12px"
+          />
+        </el-card>
+      </el-tab-pane>
+    <el-tab-pane label="粘贴 / 导入视频 ID" name="paste">
         <el-card shadow="never" class="collect-card">
           <el-input
             v-model="rawInput"
@@ -397,84 +474,7 @@ async function copyIdsFile() {
         </el-card>
       </el-tab-pane>
 
-      <el-tab-pane label="video_ids.txt" name="idsfile">
-        <el-card shadow="never" class="collect-card">
-          <div class="paste-actions">
-            <span class="ids-count">共 {{ idsCount }} 条（待采集 {{ pendingCount }} / 已采集 {{ doneCount }}）</span>
-            <el-select v-model="authorFilter" size="small" style="width: 160px" placeholder="按作者筛选">
-              <el-option label="全部作者" value="all" />
-              <el-option v-for="opt in authorOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-            </el-select>
-            <el-select v-model="statusFilter" size="small" style="width: 120px" placeholder="按状态筛选">
-              <el-option label="全部状态" value="all" />
-              <el-option label="待采集" value="pending" />
-              <el-option label="已采集" value="done" />
-            </el-select>
-            <el-button size="small" :loading="idsLoading" @click="loadIdsFile">刷新</el-button>
-            <el-button size="small" type="primary" :loading="idsSaving" :disabled="!idsItems.length" @click="saveIdsFile">
-              保存到文件
-            </el-button>
-            <el-button size="small" type="success" :loading="idsImporting" :disabled="!idsItems.length" @click="importIdsFile">
-              导入爬虫队列
-            </el-button>
-            <el-button size="small" :disabled="!idsItems.length" @click="copyIdsFile">复制全部</el-button>
-          </div>
-          <div class="paste-actions" style="margin-top: 12px">
-            <el-input
-              v-model="newIdsText"
-              size="small"
-              placeholder="粘贴新增 ID（每行/逗号/空格分隔）"
-              clearable
-              style="max-width: 420px"
-            />
-            <el-button size="small" @click="addNewIds">新增</el-button>
-            <el-button size="small" :disabled="!selectedIds.length" @click="batchSetStatus('pending')">
-              批量待采集
-            </el-button>
-            <el-button size="small" :disabled="!selectedIds.length" @click="batchSetStatus('done')">
-              批量已采集
-            </el-button>
-            <el-button size="small" type="danger" :disabled="!selectedIds.length" @click="batchDelete">
-              批量删除
-            </el-button>
-          </div>
-          <el-table
-            :data="filteredItems"
-            size="small"
-            max-height="480"
-            style="margin-top: 12px"
-            @selection-change="onIdsSelectionChange"
-          >
-            <el-table-column type="selection" width="46" />
-            <el-table-column prop="video_id" label="视频ID" width="210" />
-            <el-table-column label="状态" width="100">
-              <template #default="{ row }">
-                <el-tag :type="row.status === 'done' ? 'success' : 'warning'" size="small">
-                  {{ row.status === 'done' ? '已采集' : '待采集' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="作者" width="140">
-              <template #default="{ row }">{{ row.author_name || row.author_id || '未知' }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="150">
-              <template #default="{ row }">
-                <el-button size="small" link type="primary" @click="toggleStatus(row)">
-                  {{ row.status === 'done' ? '改为待采集' : '标记已采集' }}
-                </el-button>
-                <el-button size="small" link type="danger" @click="removeRow(row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-alert
-            type="info"
-            :closable="false"
-            title="插件采集自动追加 ID（带作者）到该文件；「保存到文件」覆盖写入并保留状态/作者；「导入爬虫队列」只推待采集 ID；「改为待采集」可强制重爬。"
-            style="margin-top: 12px"
-          />
-        </el-card>
-      </el-tab-pane>
-    </el-tabs>
+      </el-tabs>
   </div>
 </template>
 

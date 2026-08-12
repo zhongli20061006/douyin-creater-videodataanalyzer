@@ -4,10 +4,10 @@ import { useRoute } from 'vue-router'
 const route = useRoute()
 
 const menus = [
-  { index: '/', label: '看板' },
-  { index: '/queue', label: '队列监控' },
+  { index: '/', label: '数据总览' },
+  { index: '/queue', label: '爬虫复核' },
   { index: '/videos', label: '视频数据' },
-  { index: '/collect', label: '收集任务' },
+  { index: '/collect', label: '爬虫任务导入' },
   { index: '/quality', label: '数据质量' },
   { index: '/personal', label: '个人分析' },
 ]
@@ -16,7 +16,7 @@ const menus = [
 <template>
   <el-container class="layout">
     <el-aside width="200px" class="layout-aside">
-      <div class="brand">抖音爬虫管理</div>
+      <div class="brand">抖音创作者数据分析器</div>
       <el-menu :default-active="route.path" router class="layout-menu">
         <el-menu-item v-for="m in menus" :key="m.index" :index="m.index">{{ m.label }}</el-menu-item>
       </el-menu>
