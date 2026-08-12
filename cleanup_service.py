@@ -33,6 +33,38 @@ def select_stale_ids(rows: list[dict], batch_size: int = CLEANUP_BATCH_SIZE) -> 
     return [str(r['video_id']) for r in ordered[:batch_size]]
 
 
+def select_stale_ids_per_author(rows: list[dict], batch_size: int = CLEANUP_BATCH_SIZE,
+                                author_ids: Optional[list] = None) -> list[str]:
+    """按作者分组选择待删 video_id。
+
+    只处理 author_ids 中的作者（None/空列表 = 全部作者）；
+    每组行数 > batch_size 时按 update_time 升序取最旧 batch_size 条，其余组跳过。
+    """
+    if not rows:
+        return []
+    allowed = None
+    if author_ids is not None and len(author_ids) > 0:
+        allowed = {str(a) for a in author_ids}
+    groups = {}
+    order = []
+    for r in rows:
+        aid = str(r.get('author_id') or '')
+        if allowed is not None and aid not in allowed:
+            continue
+        if aid not in groups:
+            groups[aid] = []
+            order.append(aid)
+        groups[aid].append(r)
+    stale = []
+    for aid in order:
+        group = groups[aid]
+        if len(group) <= batch_size:
+            continue
+        ordered = sorted(group, key=lambda r: r.get('update_time') or datetime.min)
+        stale.extend(str(r['video_id']) for r in ordered[:batch_size])
+    return stale
+
+
 def build_backup_csv(rows: list[dict]) -> str:
     """把待删行转 CSV 文本（含全部业务字段，缺失字段留空）。"""
     buf = io.StringIO()

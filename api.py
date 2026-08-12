@@ -842,14 +842,22 @@ class CleanupToggleRequest(BaseModel):
 
 @app.get('/api/cleanup/status')
 def cleanup_status():
-    """返回定时清理开关状态与上次执行时间。"""
+    """返回定时清理开关、上次执行时间、条数与指定作者。"""
     try:
         r = get_redis()
         enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
         last_clean_time = r.get('douyin:cleanup_last_time')
+        batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
+        authors_raw = r.get('douyin:cleanup_authors')
+        authors = json.loads(authors_raw) if authors_raw else []
     except redis.ConnectionError:
         raise HTTPException(status_code=503, detail='Redis 服务不可用')
-    return {'enabled': enabled, 'last_clean_time': last_clean_time}
+    return {
+        'enabled': enabled,
+        'last_clean_time': last_clean_time,
+        'batch_size': batch_size,
+        'authors': authors,
+    }
 
 
 @app.post('/api/cleanup/toggle', dependencies=[Depends(verify_write_guard)])
@@ -863,8 +871,27 @@ def cleanup_toggle(req: CleanupToggleRequest):
     return {'enabled': req.enabled}
 
 
+class CleanupSettingsRequest(BaseModel):
+    batch_size: int = 200
+    authors: list[str] = []
+
+
+@app.post('/api/cleanup/settings', dependencies=[Depends(verify_write_guard)])
+def cleanup_settings(req: CleanupSettingsRequest):
+    """保存清理条数与指定作者（空 authors = 全部作者）。"""
+    if not (1 <= req.batch_size <= 1000):
+        raise HTTPException(status_code=400, detail='batch_size 必须在 1-1000 之间')
+    try:
+        r = get_redis()
+        r.set('douyin:cleanup_batch_size', str(req.batch_size))
+        r.set('douyin:cleanup_authors', json.dumps(req.authors))
+    except redis.ConnectionError:
+        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return {'batch_size': req.batch_size, 'authors': req.authors}
+
+
 def _cleanup_once() -> None:
-    """执行一次清理检查：满足条件则备份并删除最旧 200 条。"""
+    """执行一次清理检查：满足条件则按作者规则备份并删除。"""
     r = get_redis()
     enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
     last_raw = r.get('douyin:cleanup_last_time')
@@ -876,25 +903,29 @@ def _cleanup_once() -> None:
             last = None
     if not cleanup_service.should_run_cleanup(enabled, last, datetime.now()):
         return
+    batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
+    authors_raw = r.get('douyin:cleanup_authors')
+    authors = json.loads(authors_raw) if authors_raw else []
 
     db = get_db()
     try:
         with db.cursor() as cursor:
-            cursor.execute('SELECT COUNT(*) AS n FROM video_info')
-            total = cursor.fetchone()['n']
-            if total <= cleanup_service.CLEANUP_BATCH_SIZE:
-                print(f'定时清理跳过：全库行数 {total} <= {cleanup_service.CLEANUP_BATCH_SIZE}')
-                return
-            cursor.execute(
-                'SELECT * FROM video_info ORDER BY update_time ASC LIMIT %s',
-                (cleanup_service.CLEANUP_BATCH_SIZE,),
-            )
+            cursor.execute('SELECT * FROM video_info')
             rows = cursor.fetchall()
     finally:
         db_close(db)
     if not rows:
         return
 
+    ids = cleanup_service.select_stale_ids_per_author(
+        rows, batch_size=batch_size, author_ids=authors or None,
+    )
+    if not ids:
+        print('定时清理跳过：没有满足条件的待删数据')
+        return
+
+    by_id = {str(r['video_id']): r for r in rows}
+    delete_rows = [by_id[i] for i in ids if i in by_id]
     backup_dir = cleanup_service.CLEANUP_BACKUP_DIR
     os.makedirs(backup_dir, exist_ok=True)
     backup_path = os.path.join(
@@ -902,9 +933,8 @@ def _cleanup_once() -> None:
         'cleanup_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '.csv',
     )
     with open(backup_path, 'w', encoding='utf-8', newline='') as f:
-        f.write(cleanup_service.build_backup_csv(rows))
+        f.write(cleanup_service.build_backup_csv(delete_rows))
 
-    ids = [str(r['video_id']) for r in rows]
     db = get_db()
     try:
         with db.cursor() as cursor:

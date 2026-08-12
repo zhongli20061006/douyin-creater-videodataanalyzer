@@ -6,6 +6,7 @@ from cleanup_service import (
     CLEANUP_INTERVAL_DAYS,
     build_backup_csv,
     select_stale_ids,
+    select_stale_ids_per_author,
     should_run_cleanup,
 )
 
@@ -64,3 +65,46 @@ def test_build_backup_csv_header_and_rows():
     assert 'video_id' in text
     assert 'collect_count' in text
     assert '1' in text
+
+
+def test_select_stale_ids_per_author_all_authors():
+    rows = [
+        {'video_id': 'a1', 'author_id': 'A', 'update_time': datetime(2026, 1, 1)},
+        {'video_id': 'a2', 'author_id': 'A', 'update_time': datetime(2026, 2, 1)},
+        {'video_id': 'a3', 'author_id': 'A', 'update_time': datetime(2026, 3, 1)},
+        {'video_id': 'b1', 'author_id': 'B', 'update_time': datetime(2026, 1, 1)},
+    ]
+    assert select_stale_ids_per_author(rows, batch_size=2) == ['a1', 'a2']
+
+
+def test_select_stale_ids_per_author_filtered():
+    rows = [
+        {'video_id': 'a1', 'author_id': 'A', 'update_time': datetime(2026, 1, 1)},
+        {'video_id': 'a2', 'author_id': 'A', 'update_time': datetime(2026, 2, 1)},
+        {'video_id': 'a3', 'author_id': 'A', 'update_time': datetime(2026, 3, 1)},
+        {'video_id': 'b1', 'author_id': 'B', 'update_time': datetime(2026, 1, 1)},
+        {'video_id': 'b2', 'author_id': 'B', 'update_time': datetime(2026, 2, 1)},
+        {'video_id': 'b3', 'author_id': 'B', 'update_time': datetime(2026, 3, 1)},
+    ]
+    assert select_stale_ids_per_author(rows, batch_size=2, author_ids=['B']) == ['b1', 'b2']
+
+
+def test_select_stale_ids_per_author_under_limit_skipped():
+    rows = [
+        {'video_id': 'a1', 'author_id': 'A', 'update_time': datetime(2026, 1, 1)},
+        {'video_id': 'a2', 'author_id': 'A', 'update_time': datetime(2026, 2, 1)},
+    ]
+    assert select_stale_ids_per_author(rows, batch_size=2) == []
+
+
+def test_select_stale_ids_per_author_empty_rows():
+    assert select_stale_ids_per_author([]) == []
+
+
+def test_select_stale_ids_per_author_empty_author_group():
+    rows = [
+        {'video_id': 'x1', 'author_id': '', 'update_time': datetime(2026, 1, 1)},
+        {'video_id': 'x2', 'author_id': '', 'update_time': datetime(2026, 2, 1)},
+        {'video_id': 'x3', 'author_id': '', 'update_time': datetime(2026, 3, 1)},
+    ]
+    assert select_stale_ids_per_author(rows, batch_size=2) == ['x1', 'x2']

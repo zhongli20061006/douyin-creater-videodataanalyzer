@@ -31,6 +31,9 @@ const fixing = ref(false)
 const deleting = ref(false)
 const cleanupEnabled = ref(false)
 const cleanupLoading = ref(false)
+const cleanupAuthors = ref<string[]>([])
+const cleanupBatchSize = ref(200)
+const authorOptions = ref<Array<{ author_id: string; author_name: string }>>([])
 
 const LABELS: Record<string, string> = {
   empty: '疑似无效',
@@ -54,8 +57,14 @@ async function load() {
 
 async function loadCleanupStatus() {
   try {
-    const res = await api.get<{ enabled: boolean }>('/cleanup/status')
+    const res = await api.get<{ enabled: boolean; batch_size: number; authors: string[] }>('/cleanup/status')
     cleanupEnabled.value = res.data.enabled
+    cleanupBatchSize.value = res.data.batch_size
+    cleanupAuthors.value = res.data.authors
+  } catch { /* 忽略 */ }
+  try {
+    const authorsRes = await api.get<{ authors: Array<{ author_id: string; author_name: string }> }>('/analyze/authors')
+    authorOptions.value = authorsRes.data.authors ?? []
   } catch { /* 忽略 */ }
 }
 
@@ -69,6 +78,18 @@ async function toggleCleanup(val: boolean) {
     ElMessage.error(e?.response?.data?.detail || e?.message || '切换失败')
   } finally {
     cleanupLoading.value = false
+  }
+}
+
+async function saveCleanupSettings() {
+  try {
+    await api.post('/cleanup/settings', {
+      batch_size: cleanupBatchSize.value,
+      authors: cleanupAuthors.value,
+    })
+    ElMessage.success('清理设置已保存')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '保存设置失败')
   }
 }
 
@@ -156,13 +177,35 @@ onMounted(() => {
       <template #header>
         <span>定时清理</span>
       </template>
-      <div class="q-cleanup">
-        <span>每 30 天按更新时间删除最旧 200 条数据（删除前自动备份，行数不足 200 时不执行）。</span>
-        <el-switch
-          v-model="cleanupEnabled"
-          :loading="cleanupLoading"
-          @change="toggleCleanup"
-        />
+      <div class="cleanup-panel">
+        <div class="cleanup-row">
+          <span>开关</span>
+          <el-switch v-model="cleanupEnabled" :loading="cleanupLoading" @change="toggleCleanup" />
+        </div>
+        <div class="cleanup-row">
+          <span>每次删除条数</span>
+          <el-input-number v-model="cleanupBatchSize" :min="1" :max="1000" :step="50" @change="saveCleanupSettings" />
+        </div>
+        <div class="cleanup-row">
+          <span>作者范围（不选=全部作者）</span>
+          <el-select
+            v-model="cleanupAuthors"
+            multiple
+            filterable
+            clearable
+            collapse-tags
+            placeholder="全部作者"
+            style="width: 320px"
+            @change="saveCleanupSettings"
+          >
+            <el-option
+              v-for="a in authorOptions"
+              :key="a.author_id"
+              :label="`${a.author_name || a.author_id}`"
+              :value="a.author_id"
+            />
+          </el-select>
+        </div>
       </div>
     </el-card>
     <el-row :gutter="16">
@@ -264,10 +307,14 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 8px;
 }
-.q-cleanup {
+.cleanup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cleanup-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   color: var(--spider-text-secondary);
   font-size: 13px;
