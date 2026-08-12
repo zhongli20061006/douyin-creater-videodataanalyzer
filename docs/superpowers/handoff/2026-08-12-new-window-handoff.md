@@ -2,7 +2,7 @@
 
 工作目录：`D:\DjangoProject\PythonProject11`
 当前日期：2026-08-12
-当前目标：继续项目收尾——剩余待办为云部署（方向 A）、PR #1 收尾（「收藏字段 collect_count」已在本窗口完成并验收）。
+当前目标：继续项目收尾——剩余待办为云部署（方向 A）（时间检索、定时清理、收藏字段均已在本窗口完成并验收；PR #1/#2/#3 均已合并）。
 
 ## 必须遵守
 
@@ -64,6 +64,14 @@ b9c0709 feat: 后端绑定 127.0.0.1 + 扩展写接口令牌鉴权（fail-closed
 - **修复（验证暴露）**：unlimited 模式主页采集作者归属——以「卡片链接 secUid × hook `author.sec_uid` 精确匹配」确定页面主人（合拍/转载/跨页残留均归页面主人），自己主页（登录 secUid=页面 secUid）用登录配置；**RENDER_DATA 的 `app.odin` 是登录账号，不可用作页面主人**（曾误用导致 234 条错标，已删）；
 - **数据操作**：删除 234 条错标行（author_id=登录账号且 author_name 空），删除前完整备份至 `D:\pip_tmp\collect_count_mislabeled_20260812.json`（可恢复）。
 
+### 时间检索 + 定时清理 + 个人分析标注（2026-08-12，本窗口新增）
+
+- **时间检索**：`/api/videos`、`/api/stats`、`/api/analyze/personal` 支持 `start_date`/`end_date`（`YYYY-MM-DD` 闭区间，按 `publish_time`）；非法格式或起止倒置 → 400；前端三页（视频数据/数据总览/个人分析）加日期范围选择器（含「本月」快捷），与搜索/排序/分页/作者选择组合；
+- **定时清理**：后端启动时注册后台循环（每 24h 检查一次），开关开启且距上次执行满 30 天时，按 `update_time` 升序删除最旧 200 条；全库 ≤ 200 条不执行；删除前完整备份到 `CLEANUP_BACKUP_DIR`（默认系统临时目录 `douyin_cleanup_backup`）并写日志，备份失败不删；开关与上次执行时间存 Redis（`douyin:cleanup_enabled` / `douyin:cleanup_last_time`），默认关闭；开关入口 = 视频数据页 + 数据质量页（共用同一 Redis 状态）；
+- **收藏率**：`analyzer.summarize_rows` 的 `engagement` 新增 `collect_rate`（无播放量退化以点赞为分母）；个人分析页新增「收藏率」卡；
+- **非本人标注**：个人分析页在 `play.missing_rate >= 0.99` 时显示「分享率、收藏率以点赞数为分母计算」；
+- **顺带修复**：`/api/analyze/personal` 的 `sort_by` 白名单补上 `collects`（此前前端有「按收藏」但后端会 400）；FastAPI `on_event` 改为 lifespan 写法（消除弃用警告）。
+
 ### 后端（Python）
 - 鉴权：绑定 127.0.0.1、CORS 白名单、写接口守卫（Origin 白名单或 X-API-Token，fail-closed）；`/api/extension/ids/status`、`/api/queue/clear`、`/api/queue/remove`；
 - `video_ids.txt`：`id|status|author_id` 三列、状态管理、作者归属、昵称映射（`attach_author_names`）、`set_ids_status`、`backfill_authors`（函数就绪未执行）、PUT 允许空数组清空；
@@ -94,13 +102,13 @@ b9c0709 feat: 后端绑定 127.0.0.1 + 扩展写接口令牌鉴权（fail-closed
 已通过（本窗口最近一次，2026-08-12）：
 ```bash
 cd extension && node --test        # 32 passed
-.\.venv\Scripts\python.exe -m pytest -q   # 126 passed（1 条 pandas/pyarrow 既有警告）
+.\.venv\Scripts\python.exe -m pytest -q   # 145 passed（1 条 pandas/pyarrow 既有警告）
 cd frontend && npm run build       # 构建成功（chunk 大小警告为既有提示）
 ```
 
-真机已验证：插件主页采集（计数/停止/入库）、CORS 修复后上报、作者归属以 hook 为准（含 SPA 残留过滤）、收集页表格/批量操作、队列清空/移除；**收藏字段**：爬虫跑 2 条历史数据（收藏 610/162 入库）；浏览器插件在「Token就是词元」主页采集 60 条，作者与收藏全部正确入库（60/60 有收藏值）。
+真机已验证：插件主页采集（计数/停止/入库）、CORS 修复后上报、作者归属以 hook 为准（含 SPA 残留过滤）、收集页表格/批量操作、队列清空/移除；**收藏字段**：爬虫跑 2 条历史数据（收藏 610/162 入库）；浏览器插件在「Token就是词元」主页采集 60 条，作者与收藏全部正确入库（60/60 有收藏值）；**时间检索**：三接口 2026-08 过滤（1503→61 / 个人 305→4）、非法日期 400；**清理开关**：默认关闭、toggle 开/关往返正确；浏览器四页验证通过。
 
-未验证：`backfill_authors` 历史 241 行补全（未执行，需用户确认）；部署相关全部（未部署）；收藏字段的「爬虫缺失写 0 覆盖」「详情页 DOM 收藏」真机对照（逻辑与单测已覆盖，未逐项真机核对）。
+未验证：`backfill_authors` 历史 241 行补全（未执行，需用户确认）；部署相关全部（未部署）；定时清理的「满 30 天实际执行」需等真实到期（逻辑与单测已覆盖，测试可用注入间隔验证）。
 
 ## 运行状态
 
@@ -121,9 +129,11 @@ cd frontend && npm run build       # 构建成功（chunk 大小警告为既有�
 - **RENDER_DATA 的 `app.odin` 是登录账号，不是页面主人**；主页采集归属以「卡片 secUid × hook author.sec_uid 匹配」为准（含合拍/转载/跨页残留），不要再回到 RENDER_DATA odin；
 - 主页采集归属语义：采哪个主页，记录（含合拍/转载）就归哪个主页主人；hook 只补数据不改归属；
 - 收藏字段已纳入：不要回退 `INSERT_COLUMNS`/`COUNT_FIELDS`/前端收藏展示；`video_ids.txt` 中错标 author 的 id 未清理（待用户决定）。
+- 定时清理开关默认关闭；开启后每 30 天删最旧 200 条；删除前备份到 `CLEANUP_BACKUP_DIR`，备份失败不删；全库 ≤ 200 条不执行；参数为后端常量（`cleanup_service.py`）。
+- 时间检索只按 `publish_time`；不要扩展到 crawl_time/update_time 过滤（当前无此需求）。
 
 ## 下一步
 
 1. **云部署（方向 A，已确认）**：插件内置云服务器地址 + 默认令牌，服务器环境（Linux/MySQL/Redis/系统服务）、绑定/防火墙、数据迁移、README 合规声明；部署前按「部署路线」流程；
-2. **PR #1 收尾**：`codex/personal-analyzer-extension` 领先 origin 13 提交未推送；`master` 为 PR #1 目标；合并方式由用户决定（手动或协助）；`codex/collect-count`（本窗口工作）在 PR #1 之后按用户安排单独合并；
+2. **PR 收尾已完成**：PR #1/#2/#3 均已合并到 master，功能分支已清理（本地与远端均删除），当前工作分支 `codex/time-filter-cleanup` 待合并（推送 + PR 后处理）；
 3. 可选：`backfill_authors` 历史数据补全、开源版发布准备（默认「仅自己」模式等）、`video_ids.txt` 错标 author 清理。
