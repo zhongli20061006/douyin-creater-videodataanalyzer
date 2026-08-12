@@ -14,7 +14,7 @@ VIDEO_ID_RE = re.compile(r'^\d{15,20}$')
 SOURCE_URL_RE = re.compile(r'^https://www\.douyin\.com/user/[^/?#]+/?$')
 HTTP_URL_RE = re.compile(r'^https?://\S+$')
 
-COUNT_FIELDS = ('like_count', 'comment_count', 'share_count', 'play_count')
+COUNT_FIELDS = ('like_count', 'comment_count', 'share_count', 'play_count', 'collect_count')
 TEXT_LIMITS = {
     'video_title': 512,
     'video_desc': 5000,
@@ -184,7 +184,7 @@ def validate_batch(payload: dict) -> tuple[list[dict], list[dict]]:
 INSERT_COLUMNS = (
     'video_id', 'video_title', 'video_desc', 'author_name', 'author_id',
     'publish_time', 'like_count', 'comment_count', 'share_count', 'play_count',
-    'video_url', 'cover_url',
+    'video_url', 'cover_url', 'collect_count',
 )
 
 

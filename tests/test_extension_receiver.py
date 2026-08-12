@@ -400,3 +400,65 @@ def test_evaluate_write_guard_allows_valid_token():
     allowed = ['http://127.0.0.1:8001']
     ok, status, reason = evaluate_write_guard('https://www.douyin.com', 'secret', 'secret', allowed)
     assert ok is True and status is None and reason is None
+
+
+def test_normalize_record_accepts_collect_count():
+    record, reason = normalize_record({
+        'video_id': '7638884656238410714',
+        'collect_count': 888,
+    })
+    assert reason is None
+    assert record['collect_count'] == 888
+
+
+def test_normalize_record_collect_count_none_when_missing():
+    record, _ = normalize_record({'video_id': '7638884656238410714'})
+    assert record['collect_count'] is None
+
+
+def test_normalize_record_rejects_bad_collect_count():
+    record, reason = normalize_record({
+        'video_id': '7638884656238410714',
+        'collect_count': -1,
+    })
+    assert record is None and reason
+
+
+def test_build_upsert_includes_collect_count():
+    record = {
+        'video_id': '7638884656238410714',
+        'video_title': '标题',
+        'video_desc': '',
+        'author_name': '我',
+        'author_id': 'A',
+        'publish_time': None,
+        'like_count': None,
+        'comment_count': None,
+        'share_count': None,
+        'play_count': None,
+        'collect_count': 888,
+        'video_url': '',
+        'cover_url': '',
+    }
+    sql, _ = build_upsert(record)
+    assert 'collect_count=VALUES(collect_count)' in sql
+
+
+def test_build_upsert_skips_none_collect_count():
+    record = {
+        'video_id': '7638884656238410714',
+        'video_title': '标题',
+        'video_desc': '',
+        'author_name': '我',
+        'author_id': 'A',
+        'publish_time': None,
+        'like_count': None,
+        'comment_count': None,
+        'share_count': None,
+        'play_count': None,
+        'collect_count': None,
+        'video_url': '',
+        'cover_url': '',
+    }
+    sql, _ = build_upsert(record)
+    assert 'collect_count=VALUES(collect_count)' not in sql
