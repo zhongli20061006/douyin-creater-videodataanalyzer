@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { BarChart } from 'echarts/charts'
 import { GridComponent, TitleComponent, TooltipComponent } from 'echarts/components'
 import { use } from 'echarts/core'
@@ -19,9 +19,29 @@ interface Stats {
   latest_crawl: string | null
 }
 
+const dateRange = ref<[string, string] | null>(null)
+
+const dateShortcuts = [
+  {
+    text: '本月',
+    value: () => {
+      const now = new Date()
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      return [start, now]
+    },
+  },
+]
+
 const { data, loading, error, run } = useApi<Stats>(() =>
-  api.get('/stats').then((r) => r.data),
+  api.get('/stats', {
+    params: {
+      start_date: dateRange.value ? dateRange.value[0] : undefined,
+      end_date: dateRange.value ? dateRange.value[1] : undefined,
+    },
+  }).then((r) => r.data),
 )
+
+watch(dateRange, () => run())
 
 interface AuthorDist {
   name: string
@@ -95,6 +115,17 @@ function fmtTime(t: string | null) {
     </el-card>
     <el-button v-if="loading" loading style="margin-top: 16px">加载中</el-button>
     <el-button v-else style="margin-top: 16px" @click="run">刷新</el-button>
+    <el-date-picker
+      v-model="dateRange"
+      type="daterange"
+      value-format="YYYY-MM-DD"
+      range-separator="至"
+      start-placeholder="开始日期"
+      end-placeholder="结束日期"
+      :shortcuts="dateShortcuts"
+      style="max-width: 300px; margin-top: 16px"
+      clearable
+    />
   </div>
 </template>
 

@@ -33,6 +33,7 @@ interface PersonalData {
       like_rate: number | null
       comment_rate: number | null
       share_rate: number | null
+      collect_rate: number | null
     }
     completeness: Record<string, { missing: number; total: number; missing_rate: number }>
   }
@@ -57,6 +58,18 @@ const loading = ref(false)
 const data = ref<PersonalData | null>(null)
 const error = ref('')
 const sortBy = ref('likes')
+const dateRange = ref<[string, string] | null>(null)
+
+const dateShortcuts = [
+  {
+    text: '本月',
+    value: () => {
+      const now = new Date()
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      return [start, now]
+    },
+  },
+]
 
 const interactionData = computed(() => {
   const s = data.value?.summary
@@ -173,6 +186,12 @@ const completenessNotice = computed(() => {
   return '播放量缺失表示该视频尚未被主页采集覆盖，可重新采集补齐'
 })
 
+const rateNotice = computed(() => {
+  const play = data.value?.summary?.completeness?.play
+  if (!play || play.missing_rate < 0.99) return ''
+  return '该作者数据非主页采集来源，播放量缺失；分享率、收藏率以点赞数为分母计算'
+})
+
 async function loadAuthors() {
   try {
     const res = await api.get<{ authors: AuthorOption[] }>('/analyze/authors')
@@ -191,7 +210,12 @@ async function loadPersonal() {
   error.value = ''
   try {
     const res = await api.get<PersonalData>('/analyze/personal', {
-      params: { author_id: authorId.value, sort_by: sortBy.value },
+      params: {
+        author_id: authorId.value,
+        sort_by: sortBy.value,
+        start_date: dateRange.value ? dateRange.value[0] : undefined,
+        end_date: dateRange.value ? dateRange.value[1] : undefined,
+      },
     })
     data.value = res.data
   } catch (e: any) {
@@ -201,7 +225,7 @@ async function loadPersonal() {
   }
 }
 
-watch([authorId, sortBy], loadPersonal)
+watch([authorId, sortBy, dateRange], loadPersonal)
 onMounted(loadAuthors)
 
 function fmtNum(n?: number) {
@@ -234,6 +258,17 @@ function fmtRate(v?: number | null) {
           :value="a.author_id"
         />
       </el-select>
+      <el-date-picker
+        v-model="dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        range-separator="至"
+        start-placeholder="开始日期"
+        end-placeholder="结束日期"
+        :shortcuts="dateShortcuts"
+        style="max-width: 300px"
+        clearable
+      />
       <el-button :loading="loading" @click="loadPersonal">刷新</el-button>
     </el-card>
 
@@ -272,16 +307,26 @@ function fmtRate(v?: number | null) {
       </el-row>
 
       <el-row :gutter="16" style="margin-top: 12px">
-        <el-col :span="4">
+        <el-col :span="6">
           <StatCard title="点赞率" :value="fmtRate(data.summary.engagement.like_rate)" status="success" />
         </el-col>
-        <el-col :span="4">
+        <el-col :span="6">
           <StatCard title="评论率" :value="fmtRate(data.summary.engagement.comment_rate)" status="warning" />
         </el-col>
-        <el-col :span="4">
+        <el-col :span="6">
           <StatCard title="分享率" :value="fmtRate(data.summary.engagement.share_rate)" status="info" />
         </el-col>
+        <el-col :span="6">
+          <StatCard title="收藏率" :value="fmtRate(data.summary.engagement.collect_rate)" status="info" />
+        </el-col>
       </el-row>
+      <el-alert
+        v-if="rateNotice"
+        type="info"
+        :closable="false"
+        :title="rateNotice"
+        style="margin-top: 12px"
+      />
 
       <el-row :gutter="16">
         <el-col :span="12">

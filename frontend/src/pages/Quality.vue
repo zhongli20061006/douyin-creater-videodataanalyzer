@@ -29,6 +29,8 @@ const selected = ref<IssueRow[]>([])
 const loading = ref(false)
 const fixing = ref(false)
 const deleting = ref(false)
+const cleanupEnabled = ref(false)
+const cleanupLoading = ref(false)
 
 const LABELS: Record<string, string> = {
   empty: '疑似无效',
@@ -47,6 +49,26 @@ async function load() {
     ElMessage.error(e?.response?.data?.detail || e?.message || '加载质量报告失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadCleanupStatus() {
+  try {
+    const res = await api.get<{ enabled: boolean }>('/cleanup/status')
+    cleanupEnabled.value = res.data.enabled
+  } catch { /* 忽略 */ }
+}
+
+async function toggleCleanup(val: boolean) {
+  cleanupLoading.value = true
+  try {
+    await api.post('/cleanup/toggle', { enabled: val })
+    ElMessage.success(val ? '定时清理已开启' : '定时清理已关闭')
+  } catch (e: any) {
+    cleanupEnabled.value = !val
+    ElMessage.error(e?.response?.data?.detail || e?.message || '切换失败')
+  } finally {
+    cleanupLoading.value = false
   }
 }
 
@@ -116,7 +138,10 @@ function exportXlsx() {
   window.location.href = '/api/quality/export?scope=all&format=xlsx'
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadCleanupStatus()
+})
 </script>
 
 <template>
@@ -127,6 +152,19 @@ onMounted(load)
       title="数据体检：识别疑似无效 / 占位页 / 陈旧未更新 / 作者缺失的问题数据，可一键修正（清洗标题）、删除问题数据、导出 CSV/Excel。"
       style="margin-bottom: 12px"
     />
+    <el-card shadow="never" class="q-card">
+      <template #header>
+        <span>定时清理</span>
+      </template>
+      <div class="q-cleanup">
+        <span>每 30 天按更新时间删除最旧 200 条数据（删除前自动备份，行数不足 200 时不执行）。</span>
+        <el-switch
+          v-model="cleanupEnabled"
+          :loading="cleanupLoading"
+          @change="toggleCleanup"
+        />
+      </div>
+    </el-card>
     <el-row :gutter="16">
       <el-col :span="6">
         <el-card shadow="never" class="q-card">
@@ -225,5 +263,13 @@ onMounted(load)
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+.q-cleanup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--spider-text-secondary);
+  font-size: 13px;
 }
 </style>

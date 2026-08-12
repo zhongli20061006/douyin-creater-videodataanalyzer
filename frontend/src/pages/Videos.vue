@@ -37,9 +37,23 @@ const pageSize = ref(20)
 const search = ref('')
 const sortBy = ref('crawl_time')
 const order = ref('desc')
+const dateRange = ref<[string, string] | null>(null)
 const loading = ref(false)
 const drawer = ref(false)
 const detail = ref<VideoItem | null>(null)
+const cleanupEnabled = ref(false)
+const cleanupLoading = ref(false)
+
+const dateShortcuts = [
+  {
+    text: '本月',
+    value: () => {
+      const now = new Date()
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      return [start, now]
+    },
+  },
+]
 
 const sortOptions = [
   { value: 'crawl_time', label: '爬取时间' },
@@ -61,6 +75,8 @@ async function load() {
         search: search.value,
         sort_by: sortBy.value,
         order: order.value,
+        start_date: dateRange.value ? dateRange.value[0] : undefined,
+        end_date: dateRange.value ? dateRange.value[1] : undefined,
       },
     })
     rows.value = res.data.data
@@ -117,12 +133,47 @@ async function removeRow(row: VideoItem) {
   }
 }
 
-onMounted(load)
+async function loadCleanupStatus() {
+  try {
+    const res = await api.get<{ enabled: boolean }>('/cleanup/status')
+    cleanupEnabled.value = res.data.enabled
+  } catch { /* 开关状态加载失败不阻塞页面 */ }
+}
+
+async function toggleCleanup(val: boolean) {
+  cleanupLoading.value = true
+  try {
+    await api.post('/cleanup/toggle', { enabled: val })
+    ElMessage.success(val ? '定时清理已开启' : '定时清理已关闭')
+  } catch (e: any) {
+    cleanupEnabled.value = !val
+    ElMessage.error(e?.response?.data?.detail || e?.message || '切换失败')
+  } finally {
+    cleanupLoading.value = false
+  }
+}
+
+onMounted(() => {
+  load()
+  loadCleanupStatus()
+})
 </script>
 
 <template>
   <div class="videos">
     <el-card shadow="never" class="v-card toolbar">
+      <el-date-picker
+        v-model="dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        range-separator="至"
+        start-placeholder="开始日期"
+        end-placeholder="结束日期"
+        :shortcuts="dateShortcuts"
+        style="max-width: 300px"
+        clearable
+        @change="doSearch"
+      />
       <el-input
         v-model="search"
         placeholder="搜索视频ID / 标题 / 作者"
@@ -140,6 +191,12 @@ onMounted(load)
         <el-option label="升序" value="asc" />
       </el-select>
       <el-button :loading="loading" @click="load">刷新</el-button>
+      <span class="cleanup-label">定时清理</span>
+      <el-switch
+        v-model="cleanupEnabled"
+        :loading="cleanupLoading"
+        @change="toggleCleanup"
+      />
     </el-card>
 
     <el-card shadow="never" class="v-card">
@@ -223,6 +280,10 @@ onMounted(load)
   border: 1px solid var(--spider-border);
   border-radius: var(--radius-md);
   margin-bottom: var(--space-section);
+}
+.cleanup-label {
+  color: var(--spider-text-secondary);
+  font-size: 13px;
 }
 .toolbar :deep(.el-card__body) {
   display: flex;
