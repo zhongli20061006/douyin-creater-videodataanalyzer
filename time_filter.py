@@ -33,5 +33,5 @@ def build_publish_filter(start_date: Optional[str], end_date: Optional[str]) -> 
         params.append(datetime.combine(s, datetime.min.time()))
     if e:
         clauses.append('publish_time <= %s')
-        params.append(datetime.combine(e, datetime.max.time()))
+        params.append(datetime(e.year, e.month, e.day, 23, 59, 59))
     return ' AND '.join(clauses), params
