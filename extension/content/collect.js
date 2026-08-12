@@ -13,6 +13,7 @@
   const KEY_SEC_UID = 'mySecUid';
   const KEY_NICKNAME = 'myNickname';
   const KEY_MODE = 'complianceMode';
+  const KEY_TOKEN = 'apiToken';
   const DEFAULT_BACKEND = 'http://127.0.0.1:8001';
   const HOOK_EVENT = 'dy-analyzer-data';
 
@@ -21,6 +22,7 @@
   let lastPath = '';
   const hookMap = new Map();
   let complianceLimited = false;
+  let stopRequested = false;
 
   function normalizeBase(url) {
     let u = String(url || DEFAULT_BACKEND).trim().replace(/\/+$/, '');
@@ -52,13 +54,14 @@
   }
 
   async function getConfig() {
-    const data = await storageGet([KEY_BACKEND, KEY_UID, KEY_SEC_UID, KEY_NICKNAME, KEY_MODE]);
+    const data = await storageGet([KEY_BACKEND, KEY_UID, KEY_SEC_UID, KEY_NICKNAME, KEY_MODE, KEY_TOKEN]);
     return {
       backendBaseUrl: normalizeBase(data[KEY_BACKEND]),
       myUid: data[KEY_UID] || '',
       mySecUid: data[KEY_SEC_UID] || '',
       myNickname: data[KEY_NICKNAME] || '',
       complianceMode: data[KEY_MODE] || 'unlimited',
+      apiToken: data[KEY_TOKEN] || '',
     };
   }
 
@@ -91,22 +94,41 @@
     for (const msg of buffered) handleHookData(msg.data);
   }
 
+  /** 经 background service worker 转发上报（扩展上下文 fetch，不受页面 CORS 限制）。 */
+  async function requestBackend(url, method, payload) {
+    const cfg = await getConfig();
+    const resp = await chrome.runtime.sendMessage({
+      type: 'dy-analyzer-request',
+      url: url,
+      method: method,
+      headers: { 'Content-Type': 'application/json', 'X-API-Token': cfg.apiToken },
+      body: JSON.stringify(payload),
+    });
+    if (!resp || !resp.ok) {
+      throw new Error(resp && resp.error ? resp.error : '请求失败');
+    }
+    return { status: resp.status, text: resp.bodyText };
+  }
+
   async function reportIds(videoIds, authorId) {
     const cfg = await getConfig();
-    const resp = await fetch(cfg.backendBaseUrl + '/api/extension/ids', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ video_ids: videoIds, author_id: authorId }),
+    const resp = await requestBackend(cfg.backendBaseUrl + '/api/extension/ids', 'POST', {
+      video_ids: videoIds,
+      author_id: authorId,
     });
-    if (!resp.ok) {
-      let detail = resp.statusText;
+    if (resp.status < 200 || resp.status >= 300) {
+      let detail = 'HTTP ' + resp.status;
       try {
-        const err = await resp.json();
+        const err = JSON.parse(resp.text);
         detail = err.detail || detail;
       } catch (e) { /* ignore */ }
+      if (resp.status === 401 || resp.status === 403 || resp.status === 503) {
+        detail = '后端拒绝了请求：请检查 API 令牌配置（选项页与 local_config.py 一致）。' +
+          (detail ? ' ' + detail : '');
+      }
       throw new Error(detail);
     }
-    return resp.json();
+    return JSON.parse(resp.text);
   }
 
   /** 主页模式判定：limited 模式要求主页主人 uid === 登录账号 uid；unlimited 任意用户主页。 */
@@ -143,24 +165,35 @@
 
   async function report(videos, sourceUrl) {
     const cfg = await getConfig();
-    const resp = await fetch(cfg.backendBaseUrl + '/api/extension/videos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source_url: sourceUrl, videos: videos }),
+    const resp = await requestBackend(cfg.backendBaseUrl + '/api/extension/videos', 'POST', {
+      source_url: sourceUrl,
+      videos: videos,
     });
-    if (!resp.ok) {
-      let detail = resp.statusText;
+    if (resp.status < 200 || resp.status >= 300) {
+      let detail = 'HTTP ' + resp.status;
       try {
-        const err = await resp.json();
+        const err = JSON.parse(resp.text);
         detail = err.detail || detail;
       } catch (e) { /* ignore */ }
+      if (resp.status === 401 || resp.status === 403 || resp.status === 503) {
+        detail = '后端拒绝了请求：请检查 API 令牌配置（选项页与 local_config.py 一致）。' +
+          (detail ? ' ' + detail : '');
+      }
       throw new Error(detail);
     }
-    return resp.json();
+    return JSON.parse(resp.text);
   }
 
   function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const timer = setInterval(() => {
+        if (stopRequested || Date.now() - start >= ms) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 100);
+    });
   }
 
   function waitForGrowth(root, currentCount, timeoutMs) {
@@ -168,6 +201,7 @@
       const start = Date.now();
       const timer = setInterval(() => {
         if (
+          stopRequested ||
           root.querySelectorAll('li').length > currentCount ||
           Date.now() - start > (timeoutMs || 6000)
         ) {
@@ -183,16 +217,39 @@
   function createCollectButton() {
     const old = document.getElementById('dy-analyzer-btn');
     if (old) old.remove();
+    const wrap = document.createElement('div');
+    wrap.id = 'dy-analyzer-btn';
+    wrap.style.cssText =
+      'position:fixed;right:16px;bottom:16px;z-index:2147483647;display:flex;gap:8px;align-items:center;' +
+      'font-family:system-ui,sans-serif;';
     const btn = document.createElement('div');
-    btn.id = 'dy-analyzer-btn';
+    btn.id = 'dy-analyzer-start';
     btn.textContent = '开始采集';
     btn.style.cssText =
-      'position:fixed;right:16px;bottom:16px;z-index:2147483647;background:#409eff;color:#fff;' +
-      'border-radius:20px;padding:10px 18px;font-size:14px;cursor:pointer;' +
-      'box-shadow:0 2px 8px rgba(0,0,0,.35);user-select:none;font-family:system-ui,sans-serif;';
+      'background:#409eff;color:#fff;border-radius:20px;padding:10px 18px;font-size:14px;cursor:pointer;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.35);user-select:none;white-space:nowrap;';
     btn.addEventListener('click', collectProfile);
-    document.body.appendChild(btn);
-    return btn;
+    const stop = document.createElement('div');
+    stop.id = 'dy-analyzer-stop';
+    stop.textContent = '停止';
+    stop.style.cssText =
+      'display:none;background:#f56c6c;color:#fff;border-radius:20px;padding:10px 18px;font-size:14px;cursor:pointer;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.35);user-select:none;white-space:nowrap;';
+    stop.addEventListener('click', requestStop);
+    wrap.appendChild(btn);
+    wrap.appendChild(stop);
+    document.body.appendChild(wrap);
+    return wrap;
+  }
+
+  function requestStop() {
+    if (stopRequested) return;
+    stopRequested = true;
+    const stop = document.getElementById('dy-analyzer-stop');
+    if (stop) {
+      stop.textContent = '已请求停止';
+      stop.style.pointerEvents = 'none';
+    }
   }
 
   function removeCollectButton() {
@@ -201,7 +258,8 @@
   }
 
   async function collectProfile() {
-    const btn = document.getElementById('dy-analyzer-btn');
+    const startBtn = document.getElementById('dy-analyzer-start');
+    const stopBtn = document.getElementById('dy-analyzer-stop');
     const root = document.querySelector('[data-e2e="user-post-list"]');
     if (!root) {
       showToast('未找到作品列表（user-post-list），请确认在「作品」tab');
@@ -216,8 +274,14 @@
       '初始li=', root.querySelectorAll('li').length,
       'hook已缓存=', hookMap.size,
     );
-    btn.textContent = '采集中…';
-    btn.style.pointerEvents = 'none';
+    stopRequested = false;
+    startBtn.textContent = P.progressLabel(0);
+    startBtn.style.pointerEvents = 'none';
+    if (stopBtn) {
+      stopBtn.textContent = '停止';
+      stopBtn.style.pointerEvents = 'auto';
+      stopBtn.style.display = 'block';
+    }
 
     const seen = new Set();
     const collected = [];
@@ -226,7 +290,7 @@
     let noGrowRounds = 0;
 
     try {
-      while (seen.size < MAX_VIDEOS && roundsWithoutNew < 3 && noGrowRounds < 3) {
+      while (!stopRequested && seen.size < MAX_VIDEOS && roundsWithoutNew < 3 && noGrowRounds < 3) {
         const cards = P.parseProfileCards(root, author);
         let added = 0;
         for (const card of cards) {
@@ -241,6 +305,7 @@
           }
         }
         roundsWithoutNew = added === 0 ? roundsWithoutNew + 1 : 0;
+        startBtn.textContent = P.progressLabel(seen.size);
         const scrollHeight = scroller ? scroller.scrollHeight : document.documentElement.scrollHeight;
         const scrollTop = scroller ? scroller.scrollTop : window.scrollY;
         const clientHeight = scroller ? scroller.clientHeight : window.innerHeight;
@@ -266,9 +331,19 @@
         await waitForGrowth(root, seen.size);
       }
 
+      if (stopRequested && seen.size === 0) {
+        showToast('已取消，未采集到数据');
+        return;
+      }
+
       const missingCount = collected.reduce(
         (sum, c) => sum + (c.missing_fields || []).length,
         0,
+      );
+      const batchAuthorId = P.resolveAuthorId(
+        [...hookMap.values()],
+        complianceLimited ? cfg.myUid : '',
+        collected.map((c) => c.video_id),
       );
       const rejected = [];
       for (let i = 0; i < collected.length; i += BATCH_SIZE) {
@@ -288,23 +363,36 @@
           console.warn('[dy-analyzer] 批次上报异常:', e && e.message ? e.message : e);
           rejected.push({ video_id: 'batch' + i, reason: String(e.message || e) });
         }
+        try {
+          const idsRes = await reportIds(P.idsFromBatch(batch), batchAuthorId);
+          console.log('[dy-analyzer] 批内 ids 已保留:', idsRes.added, '新增 /', idsRes.total, '总计');
+        } catch (e) {
+          console.warn('[dy-analyzer] 批内 ids 保留失败:', e && e.message ? e.message : e);
+        }
       }
-      const reason = seen.size >= MAX_VIDEOS ? '（已达采集上限 ' + MAX_VIDEOS + ' 条）' : '';
+      let head;
+      if (stopRequested) {
+        head = '已手动停止';
+      } else if (seen.size >= MAX_VIDEOS) {
+        head = '采集完成（已达采集上限 ' + MAX_VIDEOS + ' 条）';
+      } else {
+        head = '采集完成';
+      }
       showToast(
-        '采集完成' + reason + '：成功 ' + collected.length + ' 条，字段缺失 ' +
+        head + '：成功 ' + collected.length + ' 条，字段缺失 ' +
         missingCount + ' 处，被拒 ' + rejected.length + ' 条',
       );
-      try {
-        const idsRes = await reportIds([...seen], cfg.myUid);
-        console.log('[dy-analyzer] ids 已保留:', idsRes.added, '新增 /', idsRes.total, '总计');
-      } catch (e) {
-        console.warn('[dy-analyzer] ids 保留失败:', e && e.message ? e.message : e);
-      }
     } catch (e) {
       showToast('采集出错：' + (e && e.message ? e.message : e));
     } finally {
-      btn.textContent = '开始采集';
-      btn.style.pointerEvents = 'auto';
+      startBtn.textContent = '开始采集';
+      startBtn.style.pointerEvents = 'auto';
+      if (stopBtn) {
+        stopBtn.style.display = 'none';
+        stopBtn.style.pointerEvents = 'auto';
+        stopBtn.textContent = '停止';
+      }
+      stopRequested = false;
     }
   }
 

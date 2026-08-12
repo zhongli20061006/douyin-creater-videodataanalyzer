@@ -32,7 +32,7 @@ Write-Host "Starting backend on port $Port ..."
 $env:PYTHONUTF8 = "1"
 
 $proc = Start-Process -FilePath $python `
-    -ArgumentList "-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "$Port" `
+    -ArgumentList "-m", "uvicorn", "api:app", "--host", "127.0.0.1", "--port", "$Port" `
     -WorkingDirectory $ProjectRoot `
     -WindowStyle Hidden `
     -RedirectStandardOutput $OutLog `

@@ -6,7 +6,7 @@ import redis
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse, Response
@@ -44,15 +44,38 @@ except Exception:
 REDIS_START_URLS_KEY = 'douyin:start_urls'
 VIDEO_IDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video_ids.txt')
 
+try:
+    from local_config import EXTENSION_API_TOKEN
+except Exception:
+    EXTENSION_API_TOKEN = ''
+
+ALLOWED_ORIGINS = [
+    'http://127.0.0.1:8001',
+    'http://localhost:8001',
+    'http://localhost:5173',
+]
+
 app = FastAPI(title='抖音爬虫管理面板', version='1.0.0')
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
 )
+
+
+def verify_write_guard(
+    origin: Optional[str] = Header(default=None),
+    x_api_token: Optional[str] = Header(default=None, alias='X-API-Token'),
+) -> None:
+    """写接口守卫：Origin 白名单或 X-API-Token 通过；未配置令牌时 fail-closed。"""
+    allowed, status_code, reason = extension_receiver.evaluate_write_guard(
+        origin, x_api_token, EXTENSION_API_TOKEN, ALLOWED_ORIGINS,
+    )
+    if not allowed:
+        raise HTTPException(status_code=status_code, detail=reason)
 
 
 def get_redis():
@@ -173,6 +196,7 @@ class CrawlResponse(BaseModel):
     pushed: int
     queue_length: int
     video_ids: list[str]
+    skipped: int = 0
 
 
 class VideoItem(BaseModel):
@@ -344,33 +368,35 @@ def stats_authors():
     return {'authors': rows}
 
 
-@app.post('/api/crawl', response_model=CrawlResponse)
+@app.post('/api/crawl', response_model=CrawlResponse, dependencies=[Depends(verify_write_guard)])
 def push_crawl(req: CrawlRequest):
+    """只推 pending/新 id，推送成功后标记 done；Redis 不可用返回 503 且不标记。"""
+    cleaned = [vid.strip() for vid in req.video_ids if vid and vid.strip()]
+    records = extension_receiver.read_ids_with_status(VIDEO_IDS_PATH)
+    pushable = extension_receiver.filter_pending_ids(records, cleaned)
     try:
         r = get_redis()
         count = 0
-        valid_ids = []
-        for vid in req.video_ids:
-            vid = vid.strip()
-            if vid:
-                task = json.dumps({
-                    'url': f'https://www.douyin.com/video/{vid}',
-                    'type': req.task_type,
-                })
-                r.lpush(REDIS_START_URLS_KEY, task)
-                count += 1
-                valid_ids.append(vid)
+        for vid in pushable:
+            task = json.dumps({
+                'url': f'https://www.douyin.com/video/{vid}',
+                'type': req.task_type,
+            })
+            r.lpush(REDIS_START_URLS_KEY, task)
+            count += 1
         queue_length = r.llen(REDIS_START_URLS_KEY)
-        return CrawlResponse(
-            pushed=count,
-            queue_length=queue_length,
-            video_ids=valid_ids,
-        )
+        extension_receiver.mark_ids_done(VIDEO_IDS_PATH, pushable)
     except redis.ConnectionError:
         raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return CrawlResponse(
+        pushed=count,
+        queue_length=queue_length,
+        video_ids=pushable,
+        skipped=len(cleaned) - count,
+    )
 
 
-@app.delete('/api/videos/{video_id}')
+@app.delete('/api/videos/{video_id}', dependencies=[Depends(verify_write_guard)])
 def delete_video(video_id: str):
     db = get_db()
     try:
@@ -406,9 +432,45 @@ def get_queue_items(limit: int = Query(50, ge=1, le=200)):
     return {'queue_length': length, 'items': items}
 
 
+class QueueRemoveRequest(BaseModel):
+    video_ids: list[str]
+
+
+@app.post('/api/queue/clear', dependencies=[Depends(verify_write_guard)])
+def queue_clear():
+    """清空 Redis 爬虫队列。"""
+    try:
+        r = get_redis()
+        r.delete(REDIS_START_URLS_KEY)
+    except redis.ConnectionError:
+        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return {'cleared': True}
+
+
+@app.post('/api/queue/remove', dependencies=[Depends(verify_write_guard)])
+def queue_remove(req: QueueRemoveRequest):
+    """按 video_id 批量移除队列条目（保序重建）。"""
+    cleaned = [vid.strip() for vid in req.video_ids if vid and vid.strip()]
+    if not cleaned:
+        raise HTTPException(status_code=400, detail='没有合法的 video_id')
+    try:
+        r = get_redis()
+        raws = r.lrange(REDIS_START_URLS_KEY, 0, -1)
+        kept = queue_service.remove_items(raws, cleaned)
+        removed = len(raws) - len(kept)
+        if removed:
+            r.delete(REDIS_START_URLS_KEY)
+            if kept:
+                r.rpush(REDIS_START_URLS_KEY, *kept)
+        queue_length = r.llen(REDIS_START_URLS_KEY)
+    except redis.ConnectionError:
+        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return {'removed': removed, 'queue_length': queue_length}
+
+
 # ── Spider Control ──
 
-@app.post('/api/spider/start')
+@app.post('/api/spider/start', dependencies=[Depends(verify_write_guard)])
 def spider_start():
     ok, msg = spider_manager.start()
     if not ok:
@@ -418,7 +480,7 @@ def spider_start():
     return status
 
 
-@app.post('/api/spider/stop')
+@app.post('/api/spider/stop', dependencies=[Depends(verify_write_guard)])
 def spider_stop():
     ok, msg = spider_manager.stop()
     if not ok:
@@ -445,7 +507,7 @@ class CollectRequest(BaseModel):
     max_count: int = 50
 
 
-@app.post('/api/collect/author')
+@app.post('/api/collect/author', dependencies=[Depends(verify_write_guard)])
 def collect_author(req: CollectRequest):
     if not req.author_url.strip():
         raise HTTPException(status_code=400, detail='请输入作者主页链接')
@@ -482,7 +544,7 @@ def quality_report():
     return {'summary': quality_service.summarize(rows), 'issues': issues}
 
 
-@app.post('/api/quality/fix')
+@app.post('/api/quality/fix', dependencies=[Depends(verify_write_guard)])
 def quality_fix():
     db = get_db()
     try:
@@ -501,7 +563,7 @@ def quality_fix():
     }
 
 
-@app.post('/api/quality/delete')
+@app.post('/api/quality/delete', dependencies=[Depends(verify_write_guard)])
 def quality_delete(req: QualityDeleteRequest):
     if len(req.video_ids) > quality_service.MAX_DELETE_IDS:
         raise HTTPException(status_code=400, detail=f'单次最多删除 {quality_service.MAX_DELETE_IDS} 条，请分批操作')
@@ -559,7 +621,7 @@ class ExtensionVideosRequest(BaseModel):
     videos: list[dict]
 
 
-@app.post('/api/extension/videos')
+@app.post('/api/extension/videos', dependencies=[Depends(verify_write_guard)])
 def extension_receive(req: ExtensionVideosRequest):
     """浏览器插件数据接收器：校验 → 批次内去重 → 部分更新 upsert。"""
     valid, rejected = extension_receiver.validate_batch(req.model_dump())
@@ -588,7 +650,7 @@ class ExtensionIdsRequest(BaseModel):
     author_id: str = ''
 
 
-@app.post('/api/extension/ids')
+@app.post('/api/extension/ids', dependencies=[Depends(verify_write_guard)])
 def extension_save_ids(req: ExtensionIdsRequest):
     """把插件采集到的 video_id 去重追加到 video_ids.txt，供爬虫后续刷新数据。"""
     if not (1 <= len(req.video_ids) <= extension_receiver.MAX_BATCH):
@@ -606,20 +668,43 @@ def extension_save_ids(req: ExtensionIdsRequest):
             rejected.append(vid)
     if not cleaned:
         raise HTTPException(status_code=400, detail='没有合法的 video_id')
-    added, total = extension_receiver.append_ids_file(VIDEO_IDS_PATH, cleaned)
+    added, total = extension_receiver.append_ids_file(
+        VIDEO_IDS_PATH, cleaned, author_id=(req.author_id or '').strip(),
+    )
     return {'added': added, 'total': total, 'rejected': rejected}
 
 
 @app.get('/api/extension/ids')
 def extension_list_ids():
-    """返回 video_ids.txt 的数量与列表，供前端查看/导入爬虫队列。"""
-    ids = extension_receiver.read_ids_file(VIDEO_IDS_PATH)
-    return {'total': len(ids), 'video_ids': ids}
+    """返回 video_ids.txt 的数量、纯 id 列表与带状态/作者/昵称明细，供前端查看/导入爬虫队列。"""
+    records = extension_receiver.read_ids_with_status(VIDEO_IDS_PATH)
+    author_ids = {r['author_id'] for r in records if r['author_id']}
+    author_map: dict = {}
+    if author_ids:
+        db = get_db()
+        try:
+            with db.cursor() as cursor:
+                placeholders = ', '.join(['%s'] * len(author_ids))
+                cursor.execute(
+                    f'SELECT DISTINCT author_id, author_name FROM video_info '
+                    f'WHERE author_id IN ({placeholders})',
+                    tuple(author_ids),
+                )
+                for row in cursor.fetchall():
+                    author_map[row['author_id']] = row['author_name'] or ''
+        finally:
+            db_close(db)
+    items = extension_receiver.attach_author_names(records, author_map)
+    return {
+        'total': len(records),
+        'video_ids': [r['video_id'] for r in records],
+        'items': items,
+    }
 
 
-@app.put('/api/extension/ids')
+@app.put('/api/extension/ids', dependencies=[Depends(verify_write_guard)])
 def extension_replace_ids(req: ExtensionIdsRequest):
-    """前端直接编辑保存：校验后覆盖写入 video_ids.txt（锁 + 原子替换）。"""
+    """前端直接编辑保存/清空：覆盖写入 video_ids.txt（空列表=清空，锁 + 原子替换）。"""
     if len(req.video_ids) > 2000:
         raise HTTPException(status_code=400, detail='video_ids 数量超限（最多 2000 条）')
     cleaned: list[str] = []
@@ -630,10 +715,32 @@ def extension_replace_ids(req: ExtensionIdsRequest):
             cleaned.append(vid)
         else:
             rejected.append(vid)
-    if not cleaned:
-        raise HTTPException(status_code=400, detail='没有合法的 video_id')
     total = extension_receiver.write_ids_file(VIDEO_IDS_PATH, cleaned)
     return {'total': total, 'rejected': rejected}
+
+
+class ExtensionIdsStatusRequest(BaseModel):
+    video_ids: list[str]
+    status: str
+
+
+@app.post('/api/extension/ids/status', dependencies=[Depends(verify_write_guard)])
+def extension_set_ids_status(req: ExtensionIdsStatusRequest):
+    """批量切换 id 状态（pending/done），供前端强制重爬/标记。"""
+    if req.status not in ('pending', 'done'):
+        raise HTTPException(status_code=400, detail='status 必须是 pending 或 done')
+    cleaned: list[str] = []
+    rejected: list[str] = []
+    for vid in req.video_ids:
+        vid = (vid or '').strip()
+        if extension_receiver.validate_video_id(vid):
+            cleaned.append(vid)
+        else:
+            rejected.append(vid)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail='没有合法的 video_id')
+    updated = extension_receiver.set_ids_status(VIDEO_IDS_PATH, cleaned, req.status)
+    return {'updated': updated, 'rejected': rejected}
 
 
 @app.get('/api/analyze/authors')
@@ -656,8 +763,13 @@ def analyze_authors():
 
 
 @app.get('/api/analyze/personal')
-def analyze_personal(author_id: str = Query(..., description='作者 uid')):
-    """按作者聚合个人分析：概览 / 发布趋势 / Top 视频。"""
+def analyze_personal(
+    author_id: str = Query(..., description='作者 uid'),
+    sort_by: str = Query('likes', description='Top 视频排序维度'),
+):
+    """按作者聚合个人分析：概览 / 发布趋势 / 播放趋势 / Top 视频。"""
+    if sort_by not in ('likes', 'plays', 'comments', 'shares', 'engagement'):
+        raise HTTPException(status_code=400, detail='sort_by 必须是 likes/plays/comments/shares/engagement')
     db = get_db()
     try:
         with db.cursor() as cursor:
@@ -671,7 +783,8 @@ def analyze_personal(author_id: str = Query(..., description='作者 uid')):
         'author_name': author_name,
         'summary': analyzer.summarize_rows(rows),
         'trend': analyzer.build_trend(rows),
-        'top_videos': analyzer.top_videos(rows),
+        'play_trend': analyzer.build_play_trend(rows),
+        'top_videos': analyzer.top_videos(rows, sort_by=sort_by),
     }
 
 

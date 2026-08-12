@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "description": "采集自己抖音主页视频的播放量与详情页的点赞/评论/分享数据，上报到本地后端。只能采集自己的数据。",
   "permissions": ["storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "host_permissions": [
     "https://www.douyin.com/*",
     "http://127.0.0.1:8001/*",

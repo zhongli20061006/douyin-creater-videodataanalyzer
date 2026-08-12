@@ -282,9 +282,40 @@
     return messages;
   }
 
+  /** 从一批记录中提取去重后的 video_id 列表（每批 ≤ 100，天然满足后端上限）。*/
+  function idsFromBatch(records) {
+    const seen = new Set();
+    const ids = [];
+    for (const r of records || []) {
+      const vid = r && r.video_id ? String(r.video_id) : '';
+      if (vid && !seen.has(vid)) {
+        seen.add(vid);
+        ids.push(vid);
+      }
+    }
+    return ids;
+  }
+
+  /** 采集进度文案：采集中 N 条。*/
+  function progressLabel(count) {
+    return '采集中 ' + Number(count || 0) + ' 条';
+  }
+
+  /** 从 hook 记录中取第一个非空 author_id（真实作者）；可传入本次采集 videoIds 过滤残留；无则回退 fallback。 */
+  function resolveAuthorId(hookRecords, fallback, videoIds) {
+    const filter = videoIds ? new Set(videoIds) : null;
+    for (const r of hookRecords || []) {
+      if (!r) continue;
+      if (filter && !filter.has(r.video_id)) continue;
+      if (r && r.author_id) return String(r.author_id);
+    }
+    return fallback || '';
+  }
+
   const api = {
     parseCount, extractSecUidFromHref, parseProfileCards, parseVideoDetail,
     parseAwemeList, findScrollContainer, mergeCardWithHook, drainHookQueue,
+    idsFromBatch, progressLabel, resolveAuthorId,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && !root.DouyinParse) root.DouyinParse = api;

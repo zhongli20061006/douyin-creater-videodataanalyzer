@@ -121,6 +121,12 @@ onMounted(load)
 
 <template>
   <div class="quality">
+    <el-alert
+      type="info"
+      :closable="false"
+      title="数据体检：识别疑似无效 / 占位页 / 陈旧未更新 / 作者缺失的问题数据，可一键修正（清洗标题）、删除问题数据、导出 CSV/Excel。"
+      style="margin-bottom: 12px"
+    />
     <el-row :gutter="16">
       <el-col :span="6">
         <el-card shadow="never" class="q-card">

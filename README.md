@@ -125,6 +125,21 @@ npm run build              # 生产构建，由后端在 /app 提供服务
 .\.venv\Scripts\python.exe -m pytest tests/ -q
 ```
 
+## 后端安全
+- 默认仅绑定 127.0.0.1（`run_backend.ps1` / `start_server.py` 可传 `--host` 覆盖，用于将来需要时手动开放局域网）；
+- 扩展写接口（`/api/extension/*`、爬虫/队列控制、质量修复/删除、删除视频）鉴权规则：
+  Origin 在本机白名单（127.0.0.1/localhost:8001、localhost:5173）或请求头 `X-API-Token` 匹配 `local_config.py` 的 `EXTENSION_API_TOKEN`；
+- 令牌未配置时扩展上报一律拒绝（fail-closed，返回 503 并提示）；扩展选项页需填写同一令牌；
+- 已知边界：读接口不校验令牌，靠 CORS 白名单兜底；令牌以明文存于本机 `local_config.py` 与浏览器存储，请勿外传。
+
+### video_ids.txt 同步状态
+- 每行格式 `video_id|pending` 或 `video_id|done`（纯 id 行视为 pending，向后兼容）；
+- 插件采集上报的新 id 记 pending，已存在的 id 重置 pending；前端编辑保存保留已有状态；
+- 「导入爬虫队列」只推 pending 与文件外的新 id，推送成功后标记 done，避免重复爬取；
+- 强制重爬某条：编辑文件删除该行后重新导入（视为新 id）。
+- 行格式 `video_id|status|author_id`：插件上报的新 ID 带作者；作者为空显示「未知」；
+  收集页可按作者/状态筛选，支持「改为待采集」强制重爬。
+
 插件解析单测（需先 `cd extension; npm install`）：
 
 ```powershell

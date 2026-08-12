@@ -13,6 +13,9 @@ const {
   findScrollContainer,
   mergeCardWithHook,
   drainHookQueue,
+  idsFromBatch,
+  progressLabel,
+  resolveAuthorId,
 } = require('../content/parse.js')
 
 function domOf(html) {
@@ -247,4 +250,50 @@ test('drainHookQueue 回放并清空缓冲', () => {
   assert.equal(messages.length, 1)
   assert.equal(messages[0].source, 'dy-analyzer-hook')
   assert.equal(document.documentElement.__dyAnalyzerQueue.length, 0)
+})
+
+test('idsFromBatch 提取并去重 video_id', () => {
+  const batch = [
+    { video_id: '7672018085449279859', video_title: 'a' },
+    { video_id: '7672018085449279860', video_title: 'b' },
+    { video_id: '7672018085449279859', video_title: 'a-dup' },
+  ]
+  assert.deepEqual(idsFromBatch(batch), ['7672018085449279859', '7672018085449279860'])
+})
+
+test('idsFromBatch 空批与缺 id 记录返回空数组', () => {
+  assert.deepEqual(idsFromBatch([]), [])
+  assert.deepEqual(idsFromBatch([{ video_id: '' }, { video_title: 'x' }]), [])
+})
+
+test('progressLabel 生成采集进度文案', () => {
+  assert.equal(progressLabel(0), '采集中 0 条')
+  assert.equal(progressLabel(39), '采集中 39 条')
+  assert.equal(progressLabel(100), '采集中 100 条')
+})
+
+test('resolveAuthorId 优先取 hook 真实作者', () => {
+  const hooks = [
+    { video_id: '1', author_id: '' },
+    { video_id: '2', author_id: 'realAuthorUid' },
+    { video_id: '3', author_id: 'anotherUid' },
+  ]
+  assert.equal(resolveAuthorId(hooks, 'fallbackUid'), 'realAuthorUid')
+})
+
+test('resolveAuthorId 无 hook 作者时回退 fallback', () => {
+  assert.equal(resolveAuthorId([], 'myUid'), 'myUid')
+  assert.equal(resolveAuthorId([{ video_id: '1', author_id: '' }], ''), '')
+  assert.equal(resolveAuthorId(undefined, 'x'), 'x')
+})
+
+test('resolveAuthorId 按 videoIds 过滤其他作者的 hook 残留', () => {
+  const hooks = [
+    { video_id: 'a1', author_id: 'zhuifengUid' },
+    { video_id: 'b1', author_id: 'myUid' },
+  ]
+  assert.equal(resolveAuthorId(hooks, 'fallback', ['b1']), 'myUid')
+  assert.equal(resolveAuthorId(hooks, 'fallback', ['a1']), 'zhuifengUid')
+  assert.equal(resolveAuthorId(hooks, 'fallback', ['x1']), 'fallback')
+  assert.equal(resolveAuthorId(hooks, 'fallback', ['b1', 'a1']), 'zhuifengUid')
 })

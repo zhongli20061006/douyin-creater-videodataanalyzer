@@ -9,10 +9,10 @@ export default createRouter({
       path: '/',
       component: MainLayout,
       children: [
-        { path: '', name: 'dashboard', component: () => import('../pages/Dashboard.vue'), meta: { title: '看板' } },
-        { path: 'queue', name: 'queue', component: () => import('../pages/Queue.vue'), meta: { title: '队列监控' } },
+        { path: '', name: 'dashboard', component: () => import('../pages/Dashboard.vue'), meta: { title: '数据总览' } },
+        { path: 'queue', name: 'queue', component: () => import('../pages/Queue.vue'), meta: { title: '爬虫复核' } },
         { path: 'videos', name: 'videos', component: () => import('../pages/Videos.vue'), meta: { title: '视频数据' } },
-        { path: 'collect', name: 'collect', component: () => import('../pages/Collect.vue'), meta: { title: '收集任务' } },
+        { path: 'collect', name: 'collect', component: () => import('../pages/Collect.vue'), meta: { title: '插件 ID 导入与管理' } },
         { path: 'quality', name: 'quality', component: () => import('../pages/Quality.vue'), meta: { title: '数据质量' } },
         { path: 'personal', name: 'personal', component: () => import('../pages/PersonalAnalyzer.vue'), meta: { title: '个人分析' } },
       ],
