@@ -67,7 +67,7 @@ b9c0709 feat: 后端绑定 127.0.0.1 + 扩展写接口令牌鉴权（fail-closed
 ### 时间检索 + 定时清理 + 个人分析标注（2026-08-12，本窗口新增）
 
 - **时间检索**：`/api/videos`、`/api/stats`、`/api/analyze/personal` 支持 `start_date`/`end_date`（`YYYY-MM-DD` 闭区间，按 `publish_time`）；非法格式或起止倒置 → 400；前端三页（视频数据/数据总览/个人分析）加日期范围选择器（含「本月」快捷），与搜索/排序/分页/作者选择组合；
-- **定时清理**：后端启动时注册后台循环（每 24h 检查一次），开关开启且距上次执行满 30 天时，按 `update_time` 升序删除最旧 200 条；全库 ≤ 200 条不执行；删除前完整备份到 `CLEANUP_BACKUP_DIR`（默认系统临时目录 `douyin_cleanup_backup`）并写日志，备份失败不删；开关与上次执行时间存 Redis（`douyin:cleanup_enabled` / `douyin:cleanup_last_time`），默认关闭；开关入口 = 视频数据页 + 数据质量页（共用同一 Redis 状态）；
+- **定时清理（升级版，按作者精准）**：后端启动时注册后台循环（每 24h 检查一次），开关开启且距上次执行满 30 天时执行；**按作者维度**——作者多选（空=全部作者），删除条数可自定义（前端填写，默认 200，存 Redis）；被选中作者行数 > N 时按 `update_time` 升序删最旧 N 条，≤ N 不删；删除前完整备份到 `CLEANUP_BACKUP_DIR`（默认系统临时目录 `douyin_cleanup_backup`）并写日志，备份失败不删；Redis keys：`douyin:cleanup_enabled` / `douyin:cleanup_last_time` / `douyin:cleanup_batch_size` / `douyin:cleanup_authors`；配置入口 = 视频数据页 + 数据质量页（控件：开关/条数/作者多选，共用同一 Redis 状态）；
 - **收藏率**：`analyzer.summarize_rows` 的 `engagement` 新增 `collect_rate`（无播放量退化以点赞为分母）；个人分析页新增「收藏率」卡；
 - **非本人标注**：个人分析页在 `play.missing_rate >= 0.99` 时显示「分享率、收藏率以点赞数为分母计算」；
 - **顺带修复**：`/api/analyze/personal` 的 `sort_by` 白名单补上 `collects`（此前前端有「按收藏」但后端会 400）；FastAPI `on_event` 改为 lifespan 写法（消除弃用警告）。
@@ -102,7 +102,7 @@ b9c0709 feat: 后端绑定 127.0.0.1 + 扩展写接口令牌鉴权（fail-closed
 已通过（本窗口最近一次，2026-08-12）：
 ```bash
 cd extension && node --test        # 32 passed
-.\.venv\Scripts\python.exe -m pytest -q   # 145 passed（1 条 pandas/pyarrow 既有警告）
+.\.venv\Scripts\python.exe -m pytest -q   # 150 passed（1 条 pandas/pyarrow 既有警告）
 cd frontend && npm run build       # 构建成功（chunk 大小警告为既有提示）
 ```
 
@@ -129,7 +129,7 @@ cd frontend && npm run build       # 构建成功（chunk 大小警告为既有�
 - **RENDER_DATA 的 `app.odin` 是登录账号，不是页面主人**；主页采集归属以「卡片 secUid × hook author.sec_uid 匹配」为准（含合拍/转载/跨页残留），不要再回到 RENDER_DATA odin；
 - 主页采集归属语义：采哪个主页，记录（含合拍/转载）就归哪个主页主人；hook 只补数据不改归属；
 - 收藏字段已纳入：不要回退 `INSERT_COLUMNS`/`COUNT_FIELDS`/前端收藏展示；`video_ids.txt` 中错标 author 的 id 未清理（待用户决定）。
-- 定时清理开关默认关闭；开启后每 30 天删最旧 200 条；删除前备份到 `CLEANUP_BACKUP_DIR`，备份失败不删；全库 ≤ 200 条不执行；参数为后端常量（`cleanup_service.py`）。
+- 定时清理开关默认关闭；开启后每 30 天按作者规则执行（作者多选 + 自定义条数，均存 Redis）；单作者行数 ≤ 条数 N 不删；删除前备份到 `CLEANUP_BACKUP_DIR`，备份失败不删；`CLEANUP_BATCH_SIZE` 仅作 Redis 缺省值（1-1000 可在前端调整）。
 - 时间检索只按 `publish_time`；不要扩展到 crawl_time/update_time 过滤（当前无此需求）。
 
 ## 下一步
