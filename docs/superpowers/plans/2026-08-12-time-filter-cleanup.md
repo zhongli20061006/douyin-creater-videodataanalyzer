@@ -1042,3 +1042,331 @@ POST /api/cleanup/toggle {"enabled": true}                         → 开；再
 git -c safe.directory=D:/DjangoProject/PythonProject11 add docs/superpowers/handoff/2026-08-12-new-window-handoff.md
 git -c safe.directory=D:/DjangoProject/PythonProject11 commit -m "docs: 时间检索与定时清理完成收尾"
 ```
+
+---
+
+### Task 8: 定时清理升级（按作者多选 + 自定义条数，TDD）
+
+> 说明：Task 1-7 已完成并提交（时间检索 + 全库清理 + 前端）。本任务把清理逻辑从「全库删最旧 200 条」升级为「按作者维度精准清理」：作者多选（空=全部）+ 自定义条数（默认 200，存 Redis）。
+
+**Files:**
+- Modify: `cleanup_service.py`
+- Modify: `api.py`
+- Modify: `frontend/src/pages/Videos.vue`
+- Modify: `frontend/src/pages/Quality.vue`
+- Test: `tests/test_cleanup_service.py`
+
+- [ ] **Step 1: 写失败测试（追加到 `tests/test_cleanup_service.py` 末尾）**
+
+```python
+def test_select_stale_ids_per_author_all_authors():
+    rows = [
+        {'video_id': 'a1', 'author_id': 'A', 'update_time': datetime(2026, 1, 1)},
+        {'video_id': 'a2', 'author_id': 'A', 'update_time': datetime(2026, 2, 1)},
+        {'video_id': 'a3', 'author_id': 'A', 'update_time': datetime(2026, 3, 1)},
+        {'video_id': 'b1', 'author_id': 'B', 'update_time': datetime(2026, 1, 1)},
+    ]
+    assert select_stale_ids_per_author(rows, batch_size=2) == ['a1', 'a2']
+
+
+def test_select_stale_ids_per_author_filtered():
+    rows = [
+        {'video_id': 'a1', 'author_id': 'A', 'update_time': datetime(2026, 1, 1)},
+        {'video_id': 'a2', 'author_id': 'A', 'update_time': datetime(2026, 2, 1)},
+        {'video_id': 'a3', 'author_id': 'A', 'update_time': datetime(2026, 3, 1)},
+        {'video_id': 'b1', 'author_id': 'B', 'update_time': datetime(2026, 1, 1)},
+        {'video_id': 'b2', 'author_id': 'B', 'update_time': datetime(2026, 2, 1)},
+        {'video_id': 'b3', 'author_id': 'B', 'update_time': datetime(2026, 3, 1)},
+    ]
+    assert select_stale_ids_per_author(rows, batch_size=2, author_ids=['B']) == ['b1', 'b2']
+
+
+def test_select_stale_ids_per_author_under_limit_skipped():
+    rows = [
+        {'video_id': 'a1', 'author_id': 'A', 'update_time': datetime(2026, 1, 1)},
+        {'video_id': 'a2', 'author_id': 'A', 'update_time': datetime(2026, 2, 1)},
+    ]
+    assert select_stale_ids_per_author(rows, batch_size=2) == []
+
+
+def test_select_stale_ids_per_author_empty_rows():
+    assert select_stale_ids_per_author([]) == []
+
+
+def test_select_stale_ids_per_author_empty_author_group():
+    rows = [
+        {'video_id': 'x1', 'author_id': '', 'update_time': datetime(2026, 1, 1)},
+        {'video_id': 'x2', 'author_id': '', 'update_time': datetime(2026, 2, 1)},
+        {'video_id': 'x3', 'author_id': '', 'update_time': datetime(2026, 3, 1)},
+    ]
+    assert select_stale_ids_per_author(rows, batch_size=2) == ['x1', 'x2']
+```
+
+- [ ] **Step 2: 跑测试确认失败**
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_cleanup_service.py -q
+```
+
+Expected: FAIL，`ImportError: cannot import name 'select_stale_ids_per_author'`。
+
+- [ ] **Step 3: 实现 `cleanup_service.py`**
+
+导入区 `from cleanup_service import ...` 无关；在 `select_stale_ids` 之后新增：
+
+```python
+def select_stale_ids_per_author(rows: list[dict], batch_size: int = CLEANUP_BATCH_SIZE,
+                                author_ids: Optional[list] = None) -> list[str]:
+    """按作者分组选择待删 video_id。
+
+    只处理 author_ids 中的作者（None/空列表 = 全部作者）；
+    每组行数 > batch_size 时按 update_time 升序取最旧 batch_size 条，其余组跳过。
+    """
+    if not rows:
+        return []
+    allowed = None
+    if author_ids is not None and len(author_ids) > 0:
+        allowed = {str(a) for a in author_ids}
+    groups = {}
+    order = []
+    for r in rows:
+        aid = str(r.get('author_id') or '')
+        if allowed is not None and aid not in allowed:
+            continue
+        if aid not in groups:
+            groups[aid] = []
+            order.append(aid)
+        groups[aid].append(r)
+    stale = []
+    for aid in order:
+        group = groups[aid]
+        if len(group) <= batch_size:
+            continue
+        ordered = sorted(group, key=lambda r: r.get('update_time') or datetime.min)
+        stale.extend(str(r['video_id']) for r in ordered[:batch_size])
+    return stale
+```
+
+- [ ] **Step 4: 跑测试确认通过**
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_cleanup_service.py -q
+```
+
+Expected: 原 9 个 + 新增 5 个全部通过。
+
+- [ ] **Step 5: 更新 `api.py` 的 status/settings 端点与执行逻辑**
+
+5a. `cleanup_status` 返回扩展为条数+作者：
+
+```python
+@app.get('/api/cleanup/status')
+def cleanup_status():
+    """返回定时清理开关、上次执行时间、条数与指定作者。"""
+    try:
+        r = get_redis()
+        enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
+        last_clean_time = r.get('douyin:cleanup_last_time')
+        batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
+        authors_raw = r.get('douyin:cleanup_authors')
+        authors = json.loads(authors_raw) if authors_raw else []
+    except redis.ConnectionError:
+        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return {
+        'enabled': enabled,
+        'last_clean_time': last_clean_time,
+        'batch_size': batch_size,
+        'authors': authors,
+    }
+```
+
+5b. 新增 settings 端点（放在 `cleanup_toggle` 之后）：
+
+```python
+class CleanupSettingsRequest(BaseModel):
+    batch_size: int = 200
+    authors: list[str] = []
+
+
+@app.post('/api/cleanup/settings', dependencies=[Depends(verify_write_guard)])
+def cleanup_settings(req: CleanupSettingsRequest):
+    """保存清理条数与指定作者（空 authors = 全部作者）。"""
+    if not (1 <= req.batch_size <= 1000):
+        raise HTTPException(status_code=400, detail='batch_size 必须在 1-1000 之间')
+    try:
+        r = get_redis()
+        r.set('douyin:cleanup_batch_size', str(req.batch_size))
+        r.set('douyin:cleanup_authors', json.dumps(req.authors))
+    except redis.ConnectionError:
+        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return {'batch_size': req.batch_size, 'authors': req.authors}
+```
+
+5c. `_cleanup_once` 改为按作者执行（替换「全库行数判断 + ORDER BY LIMIT」段）：
+
+```python
+def _cleanup_once() -> None:
+    """执行一次清理检查：满足条件则按作者规则备份并删除。"""
+    r = get_redis()
+    enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
+    last_raw = r.get('douyin:cleanup_last_time')
+    last = None
+    if last_raw:
+        try:
+            last = datetime.fromisoformat(last_raw)
+        except ValueError:
+            last = None
+    if not cleanup_service.should_run_cleanup(enabled, last, datetime.now()):
+        return
+    batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
+    authors_raw = r.get('douyin:cleanup_authors')
+    authors = json.loads(authors_raw) if authors_raw else []
+
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute('SELECT * FROM video_info')
+            rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    if not rows:
+        return
+
+    ids = cleanup_service.select_stale_ids_per_author(
+        rows, batch_size=batch_size, author_ids=authors or None,
+    )
+    if not ids:
+        print('定时清理跳过：没有满足条件的待删数据')
+        return
+
+    by_id = {str(r['video_id']): r for r in rows}
+    delete_rows = [by_id[i] for i in ids if i in by_id]
+    backup_dir = cleanup_service.CLEANUP_BACKUP_DIR
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(
+        backup_dir,
+        'cleanup_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '.csv',
+    )
+    with open(backup_path, 'w', encoding='utf-8', newline='') as f:
+        f.write(cleanup_service.build_backup_csv(delete_rows))
+
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            placeholders = ', '.join(['%s'] * len(ids))
+            cursor.execute(
+                f'DELETE FROM video_info WHERE video_id IN ({placeholders})',
+                tuple(ids),
+            )
+            db.commit()
+    finally:
+        db_close(db)
+
+    r.set('douyin:cleanup_last_time', datetime.now().isoformat(timespec='seconds'))
+    print(f'定时清理完成：删除 {len(ids)} 条，备份 {backup_path}')
+```
+
+- [ ] **Step 6: 更新前端 `Videos.vue` 与 `Quality.vue` 清理控件**
+
+6a. 两个页面 script 统一新增（作者列表 + 设置保存）：
+
+```ts
+const cleanupAuthors = ref<string[]>([])
+const cleanupBatchSize = ref(200)
+const authorOptions = ref<Array<{ author_id: string; author_name: string }>>([])
+
+async function loadCleanupStatus() {
+  try {
+    const res = await api.get<{ enabled: boolean; batch_size: number; authors: string[] }>('/cleanup/status')
+    cleanupEnabled.value = res.data.enabled
+    cleanupBatchSize.value = res.data.batch_size
+    cleanupAuthors.value = res.data.authors
+  } catch { /* 忽略 */ }
+  try {
+    const authorsRes = await api.get<{ authors: Array<{ author_id: string; author_name: string }> }>('/analyze/authors')
+    authorOptions.value = authorsRes.data.authors ?? []
+  } catch { /* 忽略 */ }
+}
+
+async function saveCleanupSettings() {
+  try {
+    await api.post('/cleanup/settings', {
+      batch_size: cleanupBatchSize.value,
+      authors: cleanupAuthors.value,
+    })
+    ElMessage.success('清理设置已保存')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '保存设置失败')
+  }
+}
+```
+
+6b. 两个页面模板清理区替换为完整控件（开关 + 条数 + 作者多选）：
+
+```html
+      <div class="cleanup-panel">
+        <div class="cleanup-row">
+          <span>定时清理</span>
+          <el-switch v-model="cleanupEnabled" :loading="cleanupLoading" @change="toggleCleanup" />
+        </div>
+        <div class="cleanup-row">
+          <span>每次删除条数</span>
+          <el-input-number v-model="cleanupBatchSize" :min="1" :max="1000" :step="50" @change="saveCleanupSettings" />
+        </div>
+        <div class="cleanup-row">
+          <span>作者范围（不选=全部作者）</span>
+          <el-select
+            v-model="cleanupAuthors"
+            multiple
+            filterable
+            clearable
+            collapse-tags
+            placeholder="全部作者"
+            style="width: 320px"
+            @change="saveCleanupSettings"
+          >
+            <el-option
+              v-for="a in authorOptions"
+              :key="a.author_id"
+              :label="`${a.author_name || a.author_id}`"
+              :value="a.author_id"
+            />
+          </el-select>
+        </div>
+      </div>
+```
+
+6c. 两个页面 style 增加：
+
+```css
+.cleanup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cleanup-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--spider-text-secondary);
+  font-size: 13px;
+}
+```
+
+（Videos.vue 中该面板放工具栏下方；Quality.vue 中替换原「定时清理」卡片内容。）
+
+- [ ] **Step 7: 回归验证**
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+cd frontend; npm run build
+```
+
+Expected: pytest 全部通过（150 个左右）、构建成功。
+
+- [ ] **Step 8: Commit**
+
+```bash
+git -c safe.directory=D:/DjangoProject/PythonProject11 add cleanup_service.py tests/test_cleanup_service.py api.py frontend/src/pages/Videos.vue frontend/src/pages/Quality.vue docs/superpowers/specs/2026-08-12-time-filter-cleanup-design.md
+git -c safe.directory=D:/DjangoProject/PythonProject11 commit -m "feat: 定时清理按作者多选+自定义条数"
+```
