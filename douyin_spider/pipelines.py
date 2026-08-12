@@ -19,6 +19,7 @@ def build_insert_params(item):
         'comment_count': item.get('comment_count', 0),
         'share_count': item.get('share_count', 0),
         'play_count': item.get('play_count', 0),
+        'collect_count': item.get('collect_count', 0),
         'video_url': item.get('video_url', ''),
         'cover_url': item.get('cover_url', ''),
         'crawl_time': item.get('crawl_time') or datetime.now(),
@@ -104,10 +105,10 @@ class MySQLPipeline:
         upsert_sql = """
               INSERT INTO video_info
               (video_id, video_title, video_desc, author_name, author_id,
-               publish_time, like_count, comment_count, share_count, play_count,
+               publish_time, like_count, comment_count, share_count, play_count, collect_count,
                video_url, cover_url, crawl_time)
               VALUES (%(video_id)s, %(video_title)s, %(video_desc)s, %(author_name)s, %(author_id)s, \
-                      %(publish_time)s, %(like_count)s, %(comment_count)s, %(share_count)s, %(play_count)s, \
+                      %(publish_time)s, %(like_count)s, %(comment_count)s, %(share_count)s, %(play_count)s, %(collect_count)s, \
                       %(video_url)s, %(cover_url)s, %(crawl_time)s) ON DUPLICATE KEY \
               UPDATE \
                   video_title = \
@@ -119,17 +120,18 @@ class MySQLPipeline:
               VALUES (like_count), comment_count = \
               VALUES (comment_count), share_count = \
               VALUES (share_count), play_count = \
-              VALUES (play_count), video_url = \
+              VALUES (play_count), collect_count = \
+              VALUES (collect_count), video_url = \
               VALUES (video_url), cover_url = \
               VALUES (cover_url), update_time = NOW() \
               """
         insert_ignore_sql = """
               INSERT IGNORE INTO video_info
               (video_id, video_title, video_desc, author_name, author_id,
-               publish_time, like_count, comment_count, share_count, play_count,
+               publish_time, like_count, comment_count, share_count, play_count, collect_count,
                video_url, cover_url, crawl_time)
               VALUES (%(video_id)s, %(video_title)s, %(video_desc)s, %(author_name)s, %(author_id)s, \
-                      %(publish_time)s, %(like_count)s, %(comment_count)s, %(share_count)s, %(play_count)s, \
+                      %(publish_time)s, %(like_count)s, %(comment_count)s, %(share_count)s, %(play_count)s, %(collect_count)s, \
                       %(video_url)s, %(cover_url)s, %(crawl_time)s)
               """
         sql = insert_ignore_sql if should_insert_ignore(item) else upsert_sql
