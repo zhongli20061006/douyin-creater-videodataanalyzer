@@ -1,7 +1,7 @@
 """个人分析聚合逻辑单测。"""
 from datetime import datetime
 
-from analyzer import build_trend, summarize_rows, top_videos
+from analyzer import build_play_trend, build_trend, summarize_rows, top_videos
 
 
 def make_row(**over):
@@ -82,3 +82,76 @@ def test_top_videos_sorted_by_like_desc_limited():
     rows = [make_row(video_id=str(i), like_count=i) for i in range(15)]
     top = top_videos(rows, limit=5)
     assert [r['video_id'] for r in top] == ['14', '13', '12', '11', '10']
+
+
+def test_summarize_engagement_rates():
+    rows = [
+        make_row(video_id='1', play_count=200, like_count=20, comment_count=4, share_count=2),
+        make_row(video_id='2', play_count=0, like_count=10, comment_count=0, share_count=0),
+    ]
+    summary = summarize_rows(rows)
+    assert summary['engagement'] == {
+        'like_rate': 0.15,
+        'comment_rate': 0.02,
+        'share_rate': 0.01,
+    }
+
+
+def test_summarize_engagement_none_when_no_play_and_no_like():
+    summary = summarize_rows([make_row(video_id='1', play_count=0, like_count=0, comment_count=0, share_count=0)])
+    assert summary['engagement'] == {
+        'like_rate': None,
+        'comment_rate': None,
+        'share_rate': None,
+    }
+
+
+def test_summarize_engagement_falls_back_to_like_when_no_play():
+    rows = [make_row(video_id='1', play_count=0, like_count=10, comment_count=2, share_count=1)]
+    e = summarize_rows(rows)['engagement']
+    assert e['like_rate'] is None
+    assert e['comment_rate'] == 0.2
+    assert e['share_rate'] == 0.1
+
+
+def test_summarize_completeness_counts_missing():
+    rows = [
+        make_row(video_id='1', play_count=0, like_count=10, comment_count=None, share_count=0, publish_time=None),
+        make_row(video_id='2', play_count=100, like_count=10, comment_count=1, share_count=1, publish_time=None),
+    ]
+    c = summarize_rows(rows)['completeness']
+    assert c['play'] == {'missing': 1, 'total': 2, 'missing_rate': 0.5}
+    assert c['like'] == {'missing': 0, 'total': 2, 'missing_rate': 0.0}
+    assert c['comment'] == {'missing': 1, 'total': 2, 'missing_rate': 0.5}
+    assert c['share'] == {'missing': 1, 'total': 2, 'missing_rate': 0.5}
+    assert c['publish_time'] == {'missing': 2, 'total': 2, 'missing_rate': 1.0}
+
+
+def test_build_play_trend():
+    rows = [
+        make_row(video_id='1', publish_time=datetime(2026, 5, 1), play_count=100),
+        make_row(video_id='2', publish_time=datetime(2026, 5, 20), play_count=50),
+        make_row(video_id='3', publish_time=datetime(2026, 3, 15), play_count=200),
+        make_row(video_id='4', publish_time=datetime(2026, 3, 16), play_count=0),
+        make_row(video_id='5', publish_time=None, play_count=999),
+    ]
+    assert build_play_trend(rows) == [
+        {'month': '2026-03', 'plays': 200},
+        {'month': '2026-05', 'plays': 150},
+    ]
+
+
+def test_top_videos_sort_by_plays():
+    rows = [make_row(video_id=str(i), play_count=i * 10, like_count=100 - i) for i in range(1, 12)]
+    top = top_videos(rows, limit=3, sort_by='plays')
+    assert [r['video_id'] for r in top] == ['11', '10', '9']
+
+
+def test_top_videos_sort_by_engagement_puts_zero_play_last():
+    rows = [
+        make_row(video_id='a', play_count=100, like_count=50),
+        make_row(video_id='b', play_count=0, like_count=999),
+        make_row(video_id='c', play_count=200, like_count=50),
+    ]
+    top = top_videos(rows, limit=3, sort_by='engagement')
+    assert [r['video_id'] for r in top] == ['a', 'c', 'b']

@@ -28,14 +28,22 @@ interface PersonalData {
     total_shares: number
     total_plays: number
     latest_sync: string | null
+    engagement: {
+      like_rate: number | null
+      comment_rate: number | null
+      share_rate: number | null
+    }
+    completeness: Record<string, { missing: number; total: number; missing_rate: number }>
   }
   trend: { month: string; count: number }[]
+  play_trend: { month: string; plays: number }[]
   top_videos: Array<{
     video_id: string
     video_title?: string | null
     like_count?: number
     comment_count?: number
     share_count?: number
+    play_count?: number
     publish_time?: string | null
     crawl_time?: string | null
   }>
@@ -46,6 +54,7 @@ const authorId = ref('')
 const loading = ref(false)
 const data = ref<PersonalData | null>(null)
 const error = ref('')
+const sortBy = ref('likes')
 
 const interactionData = computed(() => {
   const s = data.value?.summary
@@ -61,19 +70,19 @@ const trendOption = computed(() => ({
   title: {
     text: '月度发布趋势',
     left: 'center',
-    textStyle: { color: 'var(--spider-text)', fontSize: 14 },
+    textStyle: { color: '#e5e7eb', fontSize: 14 },
   },
   tooltip: { trigger: 'axis' },
   grid: { left: 48, right: 16, top: 44, bottom: 28 },
   xAxis: {
     type: 'category',
     data: (data.value?.trend ?? []).map((t) => t.month),
-    axisLabel: { color: 'var(--spider-text-secondary)' },
+    axisLabel: { color: '#9ca3af' },
   },
   yAxis: {
     type: 'value',
     minInterval: 1,
-    axisLabel: { color: 'var(--spider-text-secondary)' },
+    axisLabel: { color: '#9ca3af' },
   },
   series: [
     {
@@ -90,19 +99,19 @@ const interactionOption = computed(() => ({
   title: {
     text: '互动总量',
     left: 'center',
-    textStyle: { color: 'var(--spider-text)', fontSize: 14 },
+    textStyle: { color: '#e5e7eb', fontSize: 14 },
   },
   tooltip: { trigger: 'axis' },
   grid: { left: 64, right: 16, top: 44, bottom: 28 },
   xAxis: {
     type: 'category',
     data: interactionData.value.map((d) => d.name),
-    axisLabel: { color: 'var(--spider-text-secondary)' },
+    axisLabel: { color: '#9ca3af' },
   },
   yAxis: {
     type: 'value',
     minInterval: 1,
-    axisLabel: { color: 'var(--spider-text-secondary)' },
+    axisLabel: { color: '#9ca3af' },
   },
   series: [
     {
@@ -114,6 +123,51 @@ const interactionOption = computed(() => ({
     },
   ],
 }))
+
+const playTrendOption = computed(() => ({
+  title: {
+    text: '每月播放量',
+    left: 'center',
+    textStyle: { color: '#e5e7eb', fontSize: 14 },
+  },
+  tooltip: { trigger: 'axis' },
+  grid: { left: 64, right: 16, top: 44, bottom: 28 },
+  xAxis: {
+    type: 'category',
+    data: (data.value?.play_trend ?? []).map((t) => t.month),
+    axisLabel: { color: '#9ca3af' },
+  },
+  yAxis: {
+    type: 'value',
+    axisLabel: { color: '#9ca3af' },
+  },
+  series: [
+    {
+      name: '播放量',
+      type: 'bar',
+      barMaxWidth: 28,
+      itemStyle: { color: '#e6a23c', borderRadius: [4, 4, 0, 0] },
+      data: (data.value?.play_trend ?? []).map((t) => t.plays),
+    },
+  ],
+}))
+
+const completenessFields = [
+  { key: 'play', label: '播放量' },
+  { key: 'like', label: '点赞' },
+  { key: 'comment', label: '评论' },
+  { key: 'share', label: '分享' },
+  { key: 'publish_time', label: '发布时间' },
+]
+
+const completenessNotice = computed(() => {
+  const play = data.value?.summary?.completeness?.play
+  if (!play) return ''
+  if (play.missing_rate >= 0.99) {
+    return '该作者数据非主页采集来源（详情/爬虫），播放量无值属预期，完整度仅供参考'
+  }
+  return '播放量缺失表示该视频尚未被主页采集覆盖，可重新采集补齐'
+})
 
 async function loadAuthors() {
   try {
@@ -133,7 +187,7 @@ async function loadPersonal() {
   error.value = ''
   try {
     const res = await api.get<PersonalData>('/analyze/personal', {
-      params: { author_id: authorId.value },
+      params: { author_id: authorId.value, sort_by: sortBy.value },
     })
     data.value = res.data
   } catch (e: any) {
@@ -143,7 +197,7 @@ async function loadPersonal() {
   }
 }
 
-watch(authorId, loadPersonal)
+watch([authorId, sortBy], loadPersonal)
 onMounted(loadAuthors)
 
 function fmtNum(n?: number) {
@@ -155,6 +209,11 @@ function fmtNum(n?: number) {
 
 function fmtTime(t?: string | null) {
   return t ? new Date(t).toLocaleString('zh-CN', { hour12: false }) : '--'
+}
+
+function fmtRate(v?: number | null) {
+  if (v === null || v === undefined) return '--'
+  return (v * 100).toFixed(2) + '%'
 }
 </script>
 
@@ -202,6 +261,18 @@ function fmtTime(t?: string | null) {
         </el-col>
       </el-row>
 
+      <el-row :gutter="16" style="margin-top: 12px">
+        <el-col :span="4">
+          <StatCard title="点赞率" :value="fmtRate(data.summary.engagement.like_rate)" status="success" />
+        </el-col>
+        <el-col :span="4">
+          <StatCard title="评论率" :value="fmtRate(data.summary.engagement.comment_rate)" status="warning" />
+        </el-col>
+        <el-col :span="4">
+          <StatCard title="分享率" :value="fmtRate(data.summary.engagement.share_rate)" status="info" />
+        </el-col>
+      </el-row>
+
       <el-row :gutter="16">
         <el-col :span="12">
           <el-card shadow="never" class="p-card">
@@ -210,16 +281,59 @@ function fmtTime(t?: string | null) {
         </el-col>
         <el-col :span="12">
           <el-card shadow="never" class="p-card">
+            <v-chart :option="playTrendOption" autoresize style="height: 300px" />
+          </el-card>
+        </el-col>
+      </el-row>
+
+      <el-row :gutter="16">
+        <el-col :span="12">
+          <el-card shadow="never" class="p-card">
             <v-chart :option="interactionOption" autoresize style="height: 300px" />
+          </el-card>
+        </el-col>
+        <el-col :span="12">
+          <el-card shadow="never" class="p-card">
+            <template #header>数据完整度</template>
+            <div v-for="f in completenessFields" :key="f.key" class="c-row">
+              <span class="c-label">{{ f.label }}</span>
+              <el-progress
+                :percentage="Math.round((1 - (data.summary.completeness[f.key]?.missing_rate ?? 0)) * 100)"
+                :stroke-width="10"
+                style="flex: 1"
+              />
+              <span class="c-missing">{{ data.summary.completeness[f.key]?.missing ?? 0 }} 条缺失</span>
+            </div>
+            <el-alert
+              v-if="completenessNotice"
+              type="info"
+              :closable="false"
+              :title="completenessNotice"
+              style="margin-top: 12px"
+            />
           </el-card>
         </el-col>
       </el-row>
 
       <el-card shadow="never" class="p-card">
-        <template #header>Top 10 视频（按点赞）</template>
+        <template #header>
+          <div class="top-header">
+            <span>Top 10 视频</span>
+            <el-select v-model="sortBy" size="small" style="width: 140px">
+              <el-option label="按点赞" value="likes" />
+              <el-option label="按播放" value="plays" />
+              <el-option label="按评论" value="comments" />
+              <el-option label="按分享" value="shares" />
+              <el-option label="按互动率" value="engagement" />
+            </el-select>
+          </div>
+        </template>
         <el-table :data="data.top_videos" size="small" max-height="460">
           <el-table-column prop="video_id" label="视频ID" width="190" />
           <el-table-column prop="video_title" label="标题" show-overflow-tooltip />
+          <el-table-column label="播放" width="100">
+            <template #default="{ row }">{{ fmtNum(row.play_count) }}</template>
+          </el-table-column>
           <el-table-column label="点赞" width="100">
             <template #default="{ row }">{{ fmtNum(row.like_count) }}</template>
           </el-table-column>
@@ -256,5 +370,27 @@ function fmtTime(t?: string | null) {
 .label {
   color: var(--spider-text-secondary);
   font-size: 14px;
+}
+.top-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.c-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.c-label {
+  width: 64px;
+  color: var(--spider-text-secondary);
+  font-size: 13px;
+}
+.c-missing {
+  width: 76px;
+  text-align: right;
+  color: var(--spider-text-secondary);
+  font-size: 12px;
 }
 </style>

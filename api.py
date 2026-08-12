@@ -763,8 +763,13 @@ def analyze_authors():
 
 
 @app.get('/api/analyze/personal')
-def analyze_personal(author_id: str = Query(..., description='作者 uid')):
-    """按作者聚合个人分析：概览 / 发布趋势 / Top 视频。"""
+def analyze_personal(
+    author_id: str = Query(..., description='作者 uid'),
+    sort_by: str = Query('likes', description='Top 视频排序维度'),
+):
+    """按作者聚合个人分析：概览 / 发布趋势 / 播放趋势 / Top 视频。"""
+    if sort_by not in ('likes', 'plays', 'comments', 'shares', 'engagement'):
+        raise HTTPException(status_code=400, detail='sort_by 必须是 likes/plays/comments/shares/engagement')
     db = get_db()
     try:
         with db.cursor() as cursor:
@@ -778,7 +783,8 @@ def analyze_personal(author_id: str = Query(..., description='作者 uid')):
         'author_name': author_name,
         'summary': analyzer.summarize_rows(rows),
         'trend': analyzer.build_trend(rows),
-        'top_videos': analyzer.top_videos(rows),
+        'play_trend': analyzer.build_play_trend(rows),
+        'top_videos': analyzer.top_videos(rows, sort_by=sort_by),
     }
 
 

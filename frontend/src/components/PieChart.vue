@@ -17,20 +17,20 @@ const option = computed(() => ({
   title: {
     text: props.title,
     left: 'center',
-    textStyle: { color: 'var(--spider-text)', fontSize: 14 },
+    textStyle: { color: '#e5e7eb', fontSize: 14 },
   },
   tooltip: { trigger: 'item' },
   legend: {
     bottom: 0,
-    textStyle: { color: 'var(--spider-text-secondary)' },
+    textStyle: { color: '#9ca3af' },
   },
   series: [
     {
       type: 'pie',
       radius: ['40%', '68%'],
       center: ['50%', '46%'],
-      itemStyle: { borderRadius: 6, borderColor: 'var(--spider-bg)', borderWidth: 2 },
-      label: { color: 'var(--spider-text-secondary)', formatter: '{b}: {c}' },
+      itemStyle: { borderRadius: 6, borderColor: '#14171c', borderWidth: 2 },
+      label: { color: '#9ca3af', formatter: '{b}: {c}' },
       data: props.data,
     },
   ],
