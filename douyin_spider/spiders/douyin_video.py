@@ -327,6 +327,7 @@ class DouyinVideoSpider(scrapy.Spider):
             item['comment_count'] = statistics.get('comment_count', 0)
             item['share_count'] = statistics.get('share_count', 0)
             item['play_count'] = statistics.get('play_count', 0)
+            item['collect_count'] = statistics.get('collect_count', 0)
 
             video = aweme_data.get('video', {})
             play_addr = video.get('play_addr', {})
