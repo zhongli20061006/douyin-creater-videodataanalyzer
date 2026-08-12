@@ -137,6 +137,8 @@ npm run build              # 生产构建，由后端在 /app 提供服务
 - 插件采集上报的新 id 记 pending，已存在的 id 重置 pending；前端编辑保存保留已有状态；
 - 「导入爬虫队列」只推 pending 与文件外的新 id，推送成功后标记 done，避免重复爬取；
 - 强制重爬某条：编辑文件删除该行后重新导入（视为新 id）。
+- 行格式 `video_id|status|author_id`：插件上报的新 ID 带作者；作者为空显示「未知」；
+  收集页可按作者/状态筛选，支持「改为待采集」强制重爬。
 
 插件解析单测（需先 `cd extension; npm install`）：
 

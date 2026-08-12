@@ -39,19 +39,21 @@ function createPage() {
         set: (_obj, cb) => { if (cb) cb() },
       },
     },
+    runtime: {
+      sendMessage: async (msg) => {
+        messages.push(msg)
+        if (String(msg.url).includes('/api/extension/ids')) {
+          return { ok: true, status: 200, bodyText: JSON.stringify({ added: 0, total: 2 }) }
+        }
+        return { ok: true, status: 200, bodyText: JSON.stringify({ accepted: 1, upserted: 1, rejected: [] }) }
+      },
+    },
   }
-  const calls = []
-  window.fetch = async (url, opts = {}) => {
-    calls.push({ url: String(url), headers: (opts && opts.headers) || {} })
-    if (String(url).includes('/api/extension/ids')) {
-      return { ok: true, json: async () => ({ added: 0, total: 2 }) }
-    }
-    return { ok: true, json: async () => ({ accepted: 1, upserted: 1, rejected: [] }) }
-  }
+  const messages = []
   window.scrollTo = () => {}
   window.eval(parseSrc)
   window.eval(collectSrc)
-  return { dom, window, calls }
+  return { dom, window, messages }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -66,7 +68,7 @@ async function waitFor(fn, timeoutMs = 5000) {
 }
 
 test('主页采集显示实时计数并可手动停止，数据与 id 照常上报', async () => {
-  const { dom, window, calls } = createPage()
+  const { dom, window, messages } = createPage()
   try {
     assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
     const mainBtn = window.document.getElementById('dy-analyzer-start')
@@ -85,17 +87,99 @@ test('主页采集显示实时计数并可手动停止，数据与 id 照常上�
     }))
 
     // 已采数据照常入库、id 按批上报
-    assert.ok(calls.some((c) => c.url.includes('/api/extension/videos')))
-    assert.ok(calls.some((c) => c.url.includes('/api/extension/ids')))
-    const videoCall = calls.find((c) => c.url.includes('/api/extension/videos'))
-    assert.ok(videoCall, '应有 /api/extension/videos 调用')
-    assert.equal(videoCall.headers['X-API-Token'], 'test-token')
-    const idsCall = calls.find((c) => c.url.includes('/api/extension/ids'))
-    assert.ok(idsCall, '应有 /api/extension/ids 调用')
-    assert.equal(idsCall.headers['X-API-Token'], 'test-token')
+    assert.ok(messages.some((m) => m.url.includes('/api/extension/videos')))
+    assert.ok(messages.some((m) => m.url.includes('/api/extension/ids')))
+    const videoMsg = messages.find((m) => m.url.includes('/api/extension/videos'))
+    assert.ok(videoMsg, '应有 /api/extension/videos 上报消息')
+    assert.equal(videoMsg.method, 'POST')
+    assert.equal(videoMsg.headers['X-API-Token'], 'test-token')
+    const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
+    assert.ok(idsMsg, '应有 /api/extension/ids 上报消息')
+    assert.equal(idsMsg.headers['X-API-Token'], 'test-token')
 
     // 采集结束按钮复位
     assert.ok(await waitFor(() => mainBtn.textContent === '开始采集'))
+  } finally {
+    dom.window.close()
+  }
+})
+
+test('主页采集上报 ids 使用 hook 真实作者', async () => {
+  const { dom, window, messages } = createPage()
+  try {
+    assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
+    const hookJson = {
+      aweme_list: [
+        {
+          aweme_id: '7672018085449279859',
+          desc: '标题A',
+          create_time: 1700000000,
+          statistics: { play_count: 236, digg_count: 40000, comment_count: 481, share_count: 1150 },
+          author: { uid: 'realAuthorUid', sec_uid: 'MS4wLjABAAAA_test', nickname: '真实作者' },
+          video: { cover: { url_list: ['https://p3.douyinpic.com/coverA.jpeg'] } },
+        },
+      ],
+    }
+    window.document.dispatchEvent(new window.CustomEvent('dy-analyzer-data', {
+      detail: JSON.stringify({ source: 'dy-analyzer-hook', data: hookJson }),
+    }))
+    const mainBtn = window.document.getElementById('dy-analyzer-start')
+    mainBtn.click()
+    assert.ok(await waitFor(() => (mainBtn.textContent || '').includes('2 条')))
+    window.document.getElementById('dy-analyzer-stop').click()
+    assert.ok(await waitFor(() => messages.some((m) => m.url.includes('/api/extension/ids'))))
+    const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
+    const body = JSON.parse(idsMsg.body)
+    assert.equal(body.author_id, 'realAuthorUid')
+  } finally {
+    dom.window.close()
+  }
+})
+
+test('主页采集上报 ids 过滤上一页面的 hook 残留作者', async () => {
+  const { dom, window, messages } = createPage()
+  try {
+    assert.ok(await waitFor(() => window.document.getElementById('dy-analyzer-start')))
+    // 残留：a 视频不在本次采集卡片中（模拟 SPA 切换前的上一作者页面）
+    const staleHook = {
+      aweme_list: [
+        {
+          aweme_id: '7672018085449279858',
+          desc: '旧作者视频',
+          create_time: 1700000000,
+          statistics: { play_count: 1 },
+          author: { uid: 'zhuifengUid', sec_uid: 'MS4wLjABAAAA_old', nickname: '追风小叶' },
+          video: { cover: { url_list: ['https://p3.douyinpic.com/coverOld.jpeg'] } },
+        },
+      ],
+    }
+    // 本次：b 视频在当前采集卡片中，作者为自己
+    const currentHook = {
+      aweme_list: [
+        {
+          aweme_id: '7672018085449279859',
+          desc: '标题A',
+          create_time: 1700000000,
+          statistics: { play_count: 236 },
+          author: { uid: 'myUid', sec_uid: 'MS4wLjABAAAA_test', nickname: '自己' },
+          video: { cover: { url_list: ['https://p3.douyinpic.com/coverA.jpeg'] } },
+        },
+      ],
+    }
+    window.document.dispatchEvent(new window.CustomEvent('dy-analyzer-data', {
+      detail: JSON.stringify({ source: 'dy-analyzer-hook', data: staleHook }),
+    }))
+    window.document.dispatchEvent(new window.CustomEvent('dy-analyzer-data', {
+      detail: JSON.stringify({ source: 'dy-analyzer-hook', data: currentHook }),
+    }))
+    const mainBtn = window.document.getElementById('dy-analyzer-start')
+    mainBtn.click()
+    assert.ok(await waitFor(() => (mainBtn.textContent || '').includes('2 条')))
+    window.document.getElementById('dy-analyzer-stop').click()
+    assert.ok(await waitFor(() => messages.some((m) => m.url.includes('/api/extension/ids'))))
+    const idsMsg = messages.find((m) => m.url.includes('/api/extension/ids'))
+    const body = JSON.parse(idsMsg.body)
+    assert.equal(body.author_id, 'myUid')
   } finally {
     dom.window.close()
   }

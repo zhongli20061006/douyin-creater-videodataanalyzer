@@ -15,6 +15,7 @@ const {
   drainHookQueue,
   idsFromBatch,
   progressLabel,
+  resolveAuthorId,
 } = require('../content/parse.js')
 
 function domOf(html) {
@@ -269,4 +270,30 @@ test('progressLabel 生成采集进度文案', () => {
   assert.equal(progressLabel(0), '采集中 0 条')
   assert.equal(progressLabel(39), '采集中 39 条')
   assert.equal(progressLabel(100), '采集中 100 条')
+})
+
+test('resolveAuthorId 优先取 hook 真实作者', () => {
+  const hooks = [
+    { video_id: '1', author_id: '' },
+    { video_id: '2', author_id: 'realAuthorUid' },
+    { video_id: '3', author_id: 'anotherUid' },
+  ]
+  assert.equal(resolveAuthorId(hooks, 'fallbackUid'), 'realAuthorUid')
+})
+
+test('resolveAuthorId 无 hook 作者时回退 fallback', () => {
+  assert.equal(resolveAuthorId([], 'myUid'), 'myUid')
+  assert.equal(resolveAuthorId([{ video_id: '1', author_id: '' }], ''), '')
+  assert.equal(resolveAuthorId(undefined, 'x'), 'x')
+})
+
+test('resolveAuthorId 按 videoIds 过滤其他作者的 hook 残留', () => {
+  const hooks = [
+    { video_id: 'a1', author_id: 'zhuifengUid' },
+    { video_id: 'b1', author_id: 'myUid' },
+  ]
+  assert.equal(resolveAuthorId(hooks, 'fallback', ['b1']), 'myUid')
+  assert.equal(resolveAuthorId(hooks, 'fallback', ['a1']), 'zhuifengUid')
+  assert.equal(resolveAuthorId(hooks, 'fallback', ['x1']), 'fallback')
+  assert.equal(resolveAuthorId(hooks, 'fallback', ['b1', 'a1']), 'zhuifengUid')
 })

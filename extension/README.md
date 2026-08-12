@@ -34,6 +34,10 @@
 后端启用鉴权后，在选项页填写与后端 `local_config.py` 中 `EXTENSION_API_TOKEN` 一致的令牌；
 未配置或令牌不匹配时采集上报会被后端拒绝（fail-closed），请检查两侧配置。
 
+### 上报机制
+插件上报请求经 background service worker 转发到后端，不受页面 CORS 限制；
+后端仍按 `X-API-Token` 校验（fail-closed），选项页需与 `local_config.py` 配置一致。
+
 ## 合规与边界
 
 - **采集模式**：配置页可选「仅自己」（白名单校验，开源发布推荐）或

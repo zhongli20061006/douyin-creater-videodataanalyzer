@@ -301,10 +301,21 @@
     return '采集中 ' + Number(count || 0) + ' 条';
   }
 
+  /** 从 hook 记录中取第一个非空 author_id（真实作者）；可传入本次采集 videoIds 过滤残留；无则回退 fallback。 */
+  function resolveAuthorId(hookRecords, fallback, videoIds) {
+    const filter = videoIds ? new Set(videoIds) : null;
+    for (const r of hookRecords || []) {
+      if (!r) continue;
+      if (filter && !filter.has(r.video_id)) continue;
+      if (r && r.author_id) return String(r.author_id);
+    }
+    return fallback || '';
+  }
+
   const api = {
     parseCount, extractSecUidFromHref, parseProfileCards, parseVideoDetail,
     parseAwemeList, findScrollContainer, mergeCardWithHook, drainHookQueue,
-    idsFromBatch, progressLabel,
+    idsFromBatch, progressLabel, resolveAuthorId,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && !root.DouyinParse) root.DouyinParse = api;

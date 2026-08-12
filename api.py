@@ -632,20 +632,43 @@ def extension_save_ids(req: ExtensionIdsRequest):
             rejected.append(vid)
     if not cleaned:
         raise HTTPException(status_code=400, detail='没有合法的 video_id')
-    added, total = extension_receiver.append_ids_file(VIDEO_IDS_PATH, cleaned)
+    added, total = extension_receiver.append_ids_file(
+        VIDEO_IDS_PATH, cleaned, author_id=(req.author_id or '').strip(),
+    )
     return {'added': added, 'total': total, 'rejected': rejected}
 
 
 @app.get('/api/extension/ids')
 def extension_list_ids():
-    """返回 video_ids.txt 的数量与列表，供前端查看/导入爬虫队列。"""
-    ids = extension_receiver.read_ids_file(VIDEO_IDS_PATH)
-    return {'total': len(ids), 'video_ids': ids}
+    """返回 video_ids.txt 的数量、纯 id 列表与带状态/作者/昵称明细，供前端查看/导入爬虫队列。"""
+    records = extension_receiver.read_ids_with_status(VIDEO_IDS_PATH)
+    author_ids = {r['author_id'] for r in records if r['author_id']}
+    author_map: dict = {}
+    if author_ids:
+        db = get_db()
+        try:
+            with db.cursor() as cursor:
+                placeholders = ', '.join(['%s'] * len(author_ids))
+                cursor.execute(
+                    f'SELECT DISTINCT author_id, author_name FROM video_info '
+                    f'WHERE author_id IN ({placeholders})',
+                    tuple(author_ids),
+                )
+                for row in cursor.fetchall():
+                    author_map[row['author_id']] = row['author_name'] or ''
+        finally:
+            db_close(db)
+    items = extension_receiver.attach_author_names(records, author_map)
+    return {
+        'total': len(records),
+        'video_ids': [r['video_id'] for r in records],
+        'items': items,
+    }
 
 
 @app.put('/api/extension/ids', dependencies=[Depends(verify_write_guard)])
 def extension_replace_ids(req: ExtensionIdsRequest):
-    """前端直接编辑保存：校验后覆盖写入 video_ids.txt（锁 + 原子替换）。"""
+    """前端直接编辑保存/清空：覆盖写入 video_ids.txt（空列表=清空，锁 + 原子替换）。"""
     if len(req.video_ids) > 2000:
         raise HTTPException(status_code=400, detail='video_ids 数量超限（最多 2000 条）')
     cleaned: list[str] = []
@@ -656,10 +679,32 @@ def extension_replace_ids(req: ExtensionIdsRequest):
             cleaned.append(vid)
         else:
             rejected.append(vid)
-    if not cleaned:
-        raise HTTPException(status_code=400, detail='没有合法的 video_id')
     total = extension_receiver.write_ids_file(VIDEO_IDS_PATH, cleaned)
     return {'total': total, 'rejected': rejected}
+
+
+class ExtensionIdsStatusRequest(BaseModel):
+    video_ids: list[str]
+    status: str
+
+
+@app.post('/api/extension/ids/status', dependencies=[Depends(verify_write_guard)])
+def extension_set_ids_status(req: ExtensionIdsStatusRequest):
+    """批量切换 id 状态（pending/done），供前端强制重爬/标记。"""
+    if req.status not in ('pending', 'done'):
+        raise HTTPException(status_code=400, detail='status 必须是 pending 或 done')
+    cleaned: list[str] = []
+    rejected: list[str] = []
+    for vid in req.video_ids:
+        vid = (vid or '').strip()
+        if extension_receiver.validate_video_id(vid):
+            cleaned.append(vid)
+        else:
+            rejected.append(vid)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail='没有合法的 video_id')
+    updated = extension_receiver.set_ids_status(VIDEO_IDS_PATH, cleaned, req.status)
+    return {'updated': updated, 'rejected': rejected}
 
 
 @app.get('/api/analyze/authors')

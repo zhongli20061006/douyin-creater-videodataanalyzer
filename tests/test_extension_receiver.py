@@ -4,6 +4,8 @@ from datetime import datetime
 from extension_receiver import (
     MAX_BATCH,
     append_ids_file,
+    attach_author_names,
+    backfill_authors,
     build_upsert,
     dedupe_records,
     evaluate_write_guard,
@@ -17,6 +19,7 @@ from extension_receiver import (
     parse_id_line,
     read_ids_file,
     read_ids_with_status,
+    set_ids_status,
     validate_batch,
     validate_source_url,
     validate_video_id,
@@ -212,21 +215,39 @@ def test_build_upsert_includes_present_count_fields():
 
 
 def test_parse_id_line():
-    assert parse_id_line('123') == ('123', 'pending')
-    assert parse_id_line('123|done') == ('123', 'done')
-    assert parse_id_line('123|bad') == ('123', 'pending')
+    assert parse_id_line('123') == ('123', 'pending', '')
+    assert parse_id_line('123|done') == ('123', 'done', '')
+    assert parse_id_line('123|pending|authorA') == ('123', 'pending', 'authorA')
+    assert parse_id_line('123|bad') == ('123', 'pending', '')
+    assert parse_id_line('123|done|a|extra') == ('123', 'done', 'a')
     assert parse_id_line('') is None
     assert parse_id_line('|x') is None
 
 
 def test_read_ids_with_status_parses_mixed_lines(tmp_path):
     path = tmp_path / 'video_ids.txt'
-    path.write_text('a\nb|done\n\nc|pending\n', encoding='utf-8')
+    path.write_text('a\nb|done\nc|pending|authorC\n', encoding='utf-8')
     assert read_ids_with_status(str(path)) == [
-        {'video_id': 'a', 'status': 'pending'},
-        {'video_id': 'b', 'status': 'done'},
-        {'video_id': 'c', 'status': 'pending'},
+        {'video_id': 'a', 'status': 'pending', 'author_id': ''},
+        {'video_id': 'b', 'status': 'done', 'author_id': ''},
+        {'video_id': 'c', 'status': 'pending', 'author_id': 'authorC'},
     ]
+
+
+def test_append_ids_file_with_author(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a|done|oldAuthor\n', encoding='utf-8')
+    added, total = append_ids_file(str(path), ['a', 'b'], author_id='newAuthor')
+    assert (added, total) == (1, 2)
+    assert path.read_text(encoding='utf-8').splitlines() == ['a|pending|newAuthor', 'b|pending|newAuthor']
+
+
+def test_append_ids_file_without_author_keeps_existing(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a|pending|authorA\n', encoding='utf-8')
+    added, total = append_ids_file(str(path), ['a'])
+    assert (added, total) == (0, 1)
+    assert path.read_text(encoding='utf-8').splitlines() == ['a|pending|authorA']
 
 
 def test_append_ids_file_merges_and_returns_counts(tmp_path):
@@ -277,9 +298,24 @@ def test_mark_ids_done_existing_and_new(tmp_path):
     assert path.read_text(encoding='utf-8').splitlines() == ['a|done', 'b|done', 'c|done']
 
 
-def test_write_ids_file_preserves_status(tmp_path):
+def test_set_ids_status_changes_and_appends(tmp_path):
     path = tmp_path / 'video_ids.txt'
-    path.write_text('a|done\nb|pending\n', encoding='utf-8')
+    path.write_text('a|pending|authorA\nb|done\n', encoding='utf-8')
+    changed = set_ids_status(str(path), ['a', 'b', 'c'], 'pending')
+    assert changed == 2
+    assert path.read_text(encoding='utf-8').splitlines() == ['a|pending|authorA', 'b|pending', 'c|pending']
+
+
+def test_mark_ids_done_keeps_author(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a|pending|authorA\n', encoding='utf-8')
+    mark_ids_done(str(path), ['a'])
+    assert path.read_text(encoding='utf-8').splitlines() == ['a|done|authorA']
+
+
+def test_write_ids_file_preserves_status_and_author(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a|done|authorA\nb|pending\n', encoding='utf-8')
     assert write_ids_file(str(path), ['b', 'c']) == 2
     assert path.read_text(encoding='utf-8').splitlines() == ['b|pending', 'c|pending']
 
@@ -297,6 +333,25 @@ def test_filter_pending_ids():
         {'video_id': 'b', 'status': 'done'},
     ]
     assert filter_pending_ids(records, ['b', 'c', 'a', 'c']) == ['c', 'a']
+
+
+def test_backfill_authors_fills_unknown_only(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a|pending\nb|done|authorB\n', encoding='utf-8')
+    changed = backfill_authors(str(path), {'a': 'authorA', 'b': 'other'})
+    assert changed == 1
+    assert path.read_text(encoding='utf-8').splitlines() == ['a|pending|authorA', 'b|done|authorB']
+
+
+def test_attach_author_names():
+    items = [
+        {'video_id': 'a', 'status': 'pending', 'author_id': 'A'},
+        {'video_id': 'b', 'status': 'done', 'author_id': ''},
+    ]
+    result = attach_author_names(items, {'A': '平原公子'})
+    assert result[0]['author_name'] == '平原公子'
+    assert result[1]['author_name'] == ''
+    assert 'author_name' not in items[0]
 
 
 def test_is_valid_token():

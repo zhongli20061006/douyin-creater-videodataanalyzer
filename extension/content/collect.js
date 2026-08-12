@@ -94,17 +94,32 @@
     for (const msg of buffered) handleHookData(msg.data);
   }
 
+  /** 经 background service worker 转发上报（扩展上下文 fetch，不受页面 CORS 限制）。 */
+  async function requestBackend(url, method, payload) {
+    const cfg = await getConfig();
+    const resp = await chrome.runtime.sendMessage({
+      type: 'dy-analyzer-request',
+      url: url,
+      method: method,
+      headers: { 'Content-Type': 'application/json', 'X-API-Token': cfg.apiToken },
+      body: JSON.stringify(payload),
+    });
+    if (!resp || !resp.ok) {
+      throw new Error(resp && resp.error ? resp.error : '请求失败');
+    }
+    return { status: resp.status, text: resp.bodyText };
+  }
+
   async function reportIds(videoIds, authorId) {
     const cfg = await getConfig();
-    const resp = await fetch(cfg.backendBaseUrl + '/api/extension/ids', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Token': cfg.apiToken },
-      body: JSON.stringify({ video_ids: videoIds, author_id: authorId }),
+    const resp = await requestBackend(cfg.backendBaseUrl + '/api/extension/ids', 'POST', {
+      video_ids: videoIds,
+      author_id: authorId,
     });
-    if (!resp.ok) {
-      let detail = resp.statusText;
+    if (resp.status < 200 || resp.status >= 300) {
+      let detail = 'HTTP ' + resp.status;
       try {
-        const err = await resp.json();
+        const err = JSON.parse(resp.text);
         detail = err.detail || detail;
       } catch (e) { /* ignore */ }
       if (resp.status === 401 || resp.status === 403 || resp.status === 503) {
@@ -113,7 +128,7 @@
       }
       throw new Error(detail);
     }
-    return resp.json();
+    return JSON.parse(resp.text);
   }
 
   /** 主页模式判定：limited 模式要求主页主人 uid === 登录账号 uid；unlimited 任意用户主页。 */
@@ -150,15 +165,14 @@
 
   async function report(videos, sourceUrl) {
     const cfg = await getConfig();
-    const resp = await fetch(cfg.backendBaseUrl + '/api/extension/videos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Token': cfg.apiToken },
-      body: JSON.stringify({ source_url: sourceUrl, videos: videos }),
+    const resp = await requestBackend(cfg.backendBaseUrl + '/api/extension/videos', 'POST', {
+      source_url: sourceUrl,
+      videos: videos,
     });
-    if (!resp.ok) {
-      let detail = resp.statusText;
+    if (resp.status < 200 || resp.status >= 300) {
+      let detail = 'HTTP ' + resp.status;
       try {
-        const err = await resp.json();
+        const err = JSON.parse(resp.text);
         detail = err.detail || detail;
       } catch (e) { /* ignore */ }
       if (resp.status === 401 || resp.status === 403 || resp.status === 503) {
@@ -167,7 +181,7 @@
       }
       throw new Error(detail);
     }
-    return resp.json();
+    return JSON.parse(resp.text);
   }
 
   function sleep(ms) {
@@ -326,6 +340,11 @@
         (sum, c) => sum + (c.missing_fields || []).length,
         0,
       );
+      const batchAuthorId = P.resolveAuthorId(
+        [...hookMap.values()],
+        complianceLimited ? cfg.myUid : '',
+        collected.map((c) => c.video_id),
+      );
       const rejected = [];
       for (let i = 0; i < collected.length; i += BATCH_SIZE) {
         const batch = collected.slice(i, i + BATCH_SIZE);
@@ -345,7 +364,7 @@
           rejected.push({ video_id: 'batch' + i, reason: String(e.message || e) });
         }
         try {
-          const idsRes = await reportIds(P.idsFromBatch(batch), cfg.myUid);
+          const idsRes = await reportIds(P.idsFromBatch(batch), batchAuthorId);
           console.log('[dy-analyzer] 批内 ids 已保留:', idsRes.added, '新增 /', idsRes.total, '总计');
         } catch (e) {
           console.warn('[dy-analyzer] 批内 ids 保留失败:', e && e.message ? e.message : e);

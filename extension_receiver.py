@@ -233,28 +233,26 @@ def _read_ids(path: str) -> list[str]:
 
 
 def parse_id_line(line: str):
-    """解析一行：纯 id → pending；'id|status' 保留状态；空行/空 id 返回 None。"""
+    """解析一行：'id' / 'id|status' / 'id|status|author'；空行/空 id 返回 None。"""
     text = (line or '').strip()
     if not text:
         return None
-    if '|' in text:
-        video_id, _, status = text.partition('|')
-        video_id = video_id.strip()
-        if not video_id:
-            return None
-        if status.strip() not in ('pending', 'done'):
-            status = 'pending'
-        return video_id, status
-    return text, 'pending'
+    parts = [p.strip() for p in text.split('|')]
+    video_id = parts[0]
+    if not video_id:
+        return None
+    status = parts[1] if len(parts) > 1 and parts[1] in ('pending', 'done') else 'pending'
+    author = parts[2] if len(parts) > 2 else ''
+    return video_id, status, author
 
 
 def read_ids_with_status(path: str) -> list[dict]:
-    """读取并解析每行状态，返回 [{video_id, status}]，保序。"""
+    """读取并解析每行，返回 [{video_id, status, author_id}]，保序。"""
     records = []
     for line in _read_ids(path):
         parsed = parse_id_line(line)
         if parsed:
-            records.append({'video_id': parsed[0], 'status': parsed[1]})
+            records.append({'video_id': parsed[0], 'status': parsed[1], 'author_id': parsed[2]})
     return records
 
 
@@ -282,8 +280,14 @@ def _write_ids_atomic(path: str, ids: list[str]) -> None:
 
 
 def _write_ids_records(path: str, records: list[dict]) -> None:
-    """按 'id|status' 原子写入。"""
-    _write_ids_atomic(path, [f"{r['video_id']}|{r['status']}" for r in records])
+    """按 'id|status[|author]' 原子写入。"""
+    lines = []
+    for r in records:
+        line = f"{r['video_id']}|{r['status']}"
+        if r.get('author_id'):
+            line += f"|{r['author_id']}"
+        lines.append(line)
+    _write_ids_atomic(path, lines)
 
 
 def _lock_ids_file(path: str):
@@ -319,8 +323,9 @@ def _unlock_ids_file(fh) -> None:
     fh.close()
 
 
-def append_ids_file(path: str, new_ids: list[str]) -> tuple[int, int]:
-    """合并插件采集 id：新 id 追加 pending，已存在重置 pending。返回 (新增数, 总行数)。"""
+def append_ids_file(path: str, new_ids: list[str], author_id: str = '') -> tuple[int, int]:
+    """合并插件采集 id：新行带作者；已存在重置 pending 且 author 非空时更新作者。返回 (新增数, 总行数)。"""
+    author = (author_id or '').strip()
     with _IDS_FILE_LOCK:
         fh = _lock_ids_file(path)
         try:
@@ -332,13 +337,15 @@ def append_ids_file(path: str, new_ids: list[str]) -> tuple[int, int]:
                 if not vid:
                     continue
                 if vid not in existing:
-                    records.append({'video_id': vid, 'status': 'pending'})
+                    records.append({'video_id': vid, 'status': 'pending', 'author_id': author})
                     existing.add(vid)
                     added += 1
                 else:
                     for r in records:
                         if r['video_id'] == vid:
                             r['status'] = 'pending'
+                            if author:
+                                r['author_id'] = author
                             break
             _write_ids_records(path, records)
             return added, len(records)
@@ -346,8 +353,10 @@ def append_ids_file(path: str, new_ids: list[str]) -> tuple[int, int]:
             _unlock_ids_file(fh)
 
 
-def mark_ids_done(path: str, ids: list[str]) -> int:
-    """把 id 标记为 done（不在文件的追加为 done）。返回实际变化行数。"""
+def set_ids_status(path: str, ids: list[str], status: str) -> int:
+    """批量设状态（pending/done）；不存在的追加。返回实际变化行数。"""
+    if status not in ('pending', 'done'):
+        raise ValueError('status 必须是 pending 或 done')
     with _IDS_FILE_LOCK:
         fh = _lock_ids_file(path)
         try:
@@ -360,11 +369,11 @@ def mark_ids_done(path: str, ids: list[str]) -> int:
                     continue
                 record = by_id.get(vid)
                 if record is None:
-                    records.append({'video_id': vid, 'status': 'done'})
+                    records.append({'video_id': vid, 'status': status, 'author_id': ''})
                     by_id[vid] = records[-1]
                     changed += 1
-                elif record['status'] != 'done':
-                    record['status'] = 'done'
+                elif record['status'] != status:
+                    record['status'] = status
                     changed += 1
             if changed:
                 _write_ids_records(path, records)
@@ -373,12 +382,16 @@ def mark_ids_done(path: str, ids: list[str]) -> int:
             _unlock_ids_file(fh)
 
 
+def mark_ids_done(path: str, ids: list[str]) -> int:
+    return set_ids_status(path, ids, 'done')
+
+
 def write_ids_file(path: str, ids: list[str]) -> int:
-    """前端纯 id 全量覆盖：保留已有状态，新 id 记 pending，删除的移除。返回写入条数。"""
+    """前端纯 id 全量覆盖：保留已有状态+作者，新 id 记 (pending, 空作者)。返回写入条数。"""
     with _IDS_FILE_LOCK:
         fh = _lock_ids_file(path)
         try:
-            old = {r['video_id']: r['status'] for r in read_ids_with_status(path)}
+            old = {r['video_id']: (r['status'], r['author_id']) for r in read_ids_with_status(path)}
             records = []
             seen = set()
             for vid in ids:
@@ -386,9 +399,28 @@ def write_ids_file(path: str, ids: list[str]) -> int:
                 if not vid or vid in seen:
                     continue
                 seen.add(vid)
-                records.append({'video_id': vid, 'status': old.get(vid, 'pending')})
+                status, author = old.get(vid, ('pending', ''))
+                records.append({'video_id': vid, 'status': status, 'author_id': author})
             _write_ids_records(path, records)
             return len(records)
+        finally:
+            _unlock_ids_file(fh)
+
+
+def backfill_authors(path: str, author_map: dict) -> int:
+    """把 unknown（author 空）行的作者按 map 补全；已有作者不动。返回更新行数。"""
+    with _IDS_FILE_LOCK:
+        fh = _lock_ids_file(path)
+        try:
+            records = read_ids_with_status(path)
+            changed = 0
+            for r in records:
+                if not r['author_id'] and r['video_id'] in author_map:
+                    r['author_id'] = author_map[r['video_id']]
+                    changed += 1
+            if changed:
+                _write_ids_records(path, records)
+            return changed
         finally:
             _unlock_ids_file(fh)
 
@@ -407,3 +439,13 @@ def filter_pending_ids(records: list[dict], requested_ids: list[str]) -> list[st
         if status is None or status == 'pending':
             pushable.append(vid)
     return pushable
+
+
+def attach_author_names(items: list[dict], author_map: dict) -> list[dict]:
+    """给 items 每项附加 author_name（来自 author_map，缺失保持空串）；不修改原列表。"""
+    result = []
+    for item in items:
+        row = dict(item)
+        row['author_name'] = author_map.get(row.get('author_id') or '', '')
+        result.append(row)
+    return result
