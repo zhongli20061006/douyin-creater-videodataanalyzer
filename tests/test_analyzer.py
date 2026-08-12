@@ -86,32 +86,35 @@ def test_top_videos_sorted_by_like_desc_limited():
 
 def test_summarize_engagement_rates():
     rows = [
-        make_row(video_id='1', play_count=200, like_count=20, comment_count=4, share_count=2),
-        make_row(video_id='2', play_count=0, like_count=10, comment_count=0, share_count=0),
+        make_row(video_id='1', play_count=200, like_count=20, comment_count=4, share_count=2, collect_count=10),
+        make_row(video_id='2', play_count=0, like_count=10, comment_count=0, share_count=0, collect_count=0),
     ]
     summary = summarize_rows(rows)
     assert summary['engagement'] == {
         'like_rate': 0.15,
         'comment_rate': 0.02,
         'share_rate': 0.01,
+        'collect_rate': 0.05,
     }
 
 
 def test_summarize_engagement_none_when_no_play_and_no_like():
-    summary = summarize_rows([make_row(video_id='1', play_count=0, like_count=0, comment_count=0, share_count=0)])
+    summary = summarize_rows([make_row(video_id='1', play_count=0, like_count=0, comment_count=0, share_count=0, collect_count=0)])
     assert summary['engagement'] == {
         'like_rate': None,
         'comment_rate': None,
         'share_rate': None,
+        'collect_rate': None,
     }
 
 
 def test_summarize_engagement_falls_back_to_like_when_no_play():
-    rows = [make_row(video_id='1', play_count=0, like_count=10, comment_count=2, share_count=1)]
+    rows = [make_row(video_id='1', play_count=0, like_count=10, comment_count=2, share_count=1, collect_count=3)]
     e = summarize_rows(rows)['engagement']
     assert e['like_rate'] is None
     assert e['comment_rate'] == 0.2
     assert e['share_rate'] == 0.1
+    assert e['collect_rate'] == 0.3
 
 
 def test_summarize_completeness_counts_missing():
@@ -180,3 +183,9 @@ def test_top_videos_sort_by_collects():
     rows = [make_row(video_id=str(i), collect_count=i * 3) for i in range(1, 12)]
     top = top_videos(rows, limit=3, sort_by='collects')
     assert [r['video_id'] for r in top] == ['11', '10', '9']
+
+
+def test_summarize_collect_rate_uses_play_first():
+    rows = [make_row(video_id='1', play_count=200, like_count=20, collect_count=10)]
+    e = summarize_rows(rows)['engagement']
+    assert e['collect_rate'] == 0.05
