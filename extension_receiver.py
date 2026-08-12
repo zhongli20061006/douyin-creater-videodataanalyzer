@@ -225,21 +225,6 @@ def build_upsert(record: dict) -> tuple[str, tuple]:
 _IDS_FILE_LOCK = threading.Lock()
 
 
-def merge_ids(existing: list[str], new_ids: list[str]) -> list[str]:
-    """去重合并：保留已有顺序，新 ID 追加在末尾；返回新列表。"""
-    seen: set[str] = set()
-    merged: list[str] = []
-    for vid in existing:
-        if vid not in seen:
-            seen.add(vid)
-            merged.append(vid)
-    for vid in new_ids:
-        if vid not in seen:
-            seen.add(vid)
-            merged.append(vid)
-    return merged
-
-
 def _read_ids(path: str) -> list[str]:
     if not os.path.exists(path):
         return []
@@ -247,9 +232,35 @@ def _read_ids(path: str) -> list[str]:
         return [line.strip() for line in f if line.strip()]
 
 
+def parse_id_line(line: str):
+    """解析一行：纯 id → pending；'id|status' 保留状态；空行/空 id 返回 None。"""
+    text = (line or '').strip()
+    if not text:
+        return None
+    if '|' in text:
+        video_id, _, status = text.partition('|')
+        video_id = video_id.strip()
+        if not video_id:
+            return None
+        if status.strip() not in ('pending', 'done'):
+            status = 'pending'
+        return video_id, status
+    return text, 'pending'
+
+
+def read_ids_with_status(path: str) -> list[dict]:
+    """读取并解析每行状态，返回 [{video_id, status}]，保序。"""
+    records = []
+    for line in _read_ids(path):
+        parsed = parse_id_line(line)
+        if parsed:
+            records.append({'video_id': parsed[0], 'status': parsed[1]})
+    return records
+
+
 def read_ids_file(path: str) -> list[str]:
-    """读取 video_ids.txt 全部 ID（去空白行）；文件缺失返回空列表。"""
-    return _read_ids(path)
+    """读取 video_ids.txt 全部 ID（纯 id 列表，兼容旧调用）。"""
+    return [r['video_id'] for r in read_ids_with_status(path)]
 
 
 def _write_ids_atomic(path: str, ids: list[str]) -> None:
@@ -268,6 +279,11 @@ def _write_ids_atomic(path: str, ids: list[str]) -> None:
         except OSError:
             pass
         raise
+
+
+def _write_ids_records(path: str, records: list[dict]) -> None:
+    """按 'id|status' 原子写入。"""
+    _write_ids_atomic(path, [f"{r['video_id']}|{r['status']}" for r in records])
 
 
 def _lock_ids_file(path: str):
@@ -304,26 +320,90 @@ def _unlock_ids_file(fh) -> None:
 
 
 def append_ids_file(path: str, new_ids: list[str]) -> tuple[int, int]:
-    """并发安全地把新 ID 合并进文件：进程内锁 + 文件锁 + 原子替换。
-    返回 (新增条数, 合并后总条数)。
-    """
+    """合并插件采集 id：新 id 追加 pending，已存在重置 pending。返回 (新增数, 总行数)。"""
     with _IDS_FILE_LOCK:
         fh = _lock_ids_file(path)
         try:
-            existing = _read_ids(path)
-            merged = merge_ids(existing, new_ids)
-            _write_ids_atomic(path, merged)
-            return len(merged) - len(existing), len(merged)
+            records = read_ids_with_status(path)
+            existing = {r['video_id'] for r in records}
+            added = 0
+            for vid in new_ids:
+                vid = (vid or '').strip()
+                if not vid:
+                    continue
+                if vid not in existing:
+                    records.append({'video_id': vid, 'status': 'pending'})
+                    existing.add(vid)
+                    added += 1
+                else:
+                    for r in records:
+                        if r['video_id'] == vid:
+                            r['status'] = 'pending'
+                            break
+            _write_ids_records(path, records)
+            return added, len(records)
+        finally:
+            _unlock_ids_file(fh)
+
+
+def mark_ids_done(path: str, ids: list[str]) -> int:
+    """把 id 标记为 done（不在文件的追加为 done）。返回实际变化行数。"""
+    with _IDS_FILE_LOCK:
+        fh = _lock_ids_file(path)
+        try:
+            records = read_ids_with_status(path)
+            by_id = {r['video_id']: r for r in records}
+            changed = 0
+            for vid in ids:
+                vid = (vid or '').strip()
+                if not vid:
+                    continue
+                record = by_id.get(vid)
+                if record is None:
+                    records.append({'video_id': vid, 'status': 'done'})
+                    by_id[vid] = records[-1]
+                    changed += 1
+                elif record['status'] != 'done':
+                    record['status'] = 'done'
+                    changed += 1
+            if changed:
+                _write_ids_records(path, records)
+            return changed
         finally:
             _unlock_ids_file(fh)
 
 
 def write_ids_file(path: str, ids: list[str]) -> int:
-    """覆盖写入 video_ids.txt（进程锁 + 文件锁 + 原子替换），返回写入条数。"""
+    """前端纯 id 全量覆盖：保留已有状态，新 id 记 pending，删除的移除。返回写入条数。"""
     with _IDS_FILE_LOCK:
         fh = _lock_ids_file(path)
         try:
-            _write_ids_atomic(path, ids)
-            return len(ids)
+            old = {r['video_id']: r['status'] for r in read_ids_with_status(path)}
+            records = []
+            seen = set()
+            for vid in ids:
+                vid = (vid or '').strip()
+                if not vid or vid in seen:
+                    continue
+                seen.add(vid)
+                records.append({'video_id': vid, 'status': old.get(vid, 'pending')})
+            _write_ids_records(path, records)
+            return len(records)
         finally:
             _unlock_ids_file(fh)
+
+
+def filter_pending_ids(records: list[dict], requested_ids: list[str]) -> list[str]:
+    """筛出可推队列的 id：状态 pending 或不在文件中的（视为新 id）。保序去重。"""
+    known = {r['video_id']: r['status'] for r in records}
+    pushable = []
+    seen = set()
+    for vid in requested_ids:
+        vid = (vid or '').strip()
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
+        status = known.get(vid)
+        if status is None or status == 'pending':
+            pushable.append(vid)
+    return pushable

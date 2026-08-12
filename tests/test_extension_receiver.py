@@ -7,13 +7,16 @@ from extension_receiver import (
     build_upsert,
     dedupe_records,
     evaluate_write_guard,
+    filter_pending_ids,
     is_allowed_origin,
     is_valid_token,
-    merge_ids,
+    mark_ids_done,
     normalize_record,
     parse_count,
     parse_datetime,
+    parse_id_line,
     read_ids_file,
+    read_ids_with_status,
     validate_batch,
     validate_source_url,
     validate_video_id,
@@ -208,20 +211,22 @@ def test_build_upsert_includes_present_count_fields():
     assert 'play_count=VALUES(play_count)' not in sql
 
 
-def test_merge_ids_keeps_existing_order_and_appends_new():
-    merged = merge_ids(['a', 'b'], ['c', 'a', 'd'])
-    assert merged == ['a', 'b', 'c', 'd']
+def test_parse_id_line():
+    assert parse_id_line('123') == ('123', 'pending')
+    assert parse_id_line('123|done') == ('123', 'done')
+    assert parse_id_line('123|bad') == ('123', 'pending')
+    assert parse_id_line('') is None
+    assert parse_id_line('|x') is None
 
 
-def test_merge_ids_removes_duplicates_in_existing():
-    merged = merge_ids(['a', 'a', 'b'], ['b', 'c'])
-    assert merged == ['a', 'b', 'c']
-
-
-def test_merge_ids_empty_inputs():
-    assert merge_ids([], []) == []
-    assert merge_ids(['a'], []) == ['a']
-    assert merge_ids([], ['a', 'b']) == ['a', 'b']
+def test_read_ids_with_status_parses_mixed_lines(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a\nb|done\n\nc|pending\n', encoding='utf-8')
+    assert read_ids_with_status(str(path)) == [
+        {'video_id': 'a', 'status': 'pending'},
+        {'video_id': 'b', 'status': 'done'},
+        {'video_id': 'c', 'status': 'pending'},
+    ]
 
 
 def test_append_ids_file_merges_and_returns_counts(tmp_path):
@@ -229,14 +234,14 @@ def test_append_ids_file_merges_and_returns_counts(tmp_path):
     path.write_text('a\nb\n', encoding='utf-8')
     added, total = append_ids_file(str(path), ['b', 'c'])
     assert (added, total) == (1, 3)
-    assert path.read_text(encoding='utf-8').splitlines() == ['a', 'b', 'c']
+    assert path.read_text(encoding='utf-8').splitlines() == ['a|pending', 'b|pending', 'c|pending']
 
 
 def test_append_ids_file_creates_missing_file(tmp_path):
     path = tmp_path / 'video_ids.txt'
     added, total = append_ids_file(str(path), ['x', 'y'])
     assert (added, total) == (2, 2)
-    assert path.read_text(encoding='utf-8').splitlines() == ['x', 'y']
+    assert path.read_text(encoding='utf-8').splitlines() == ['x|pending', 'y|pending']
 
 
 def test_append_ids_file_no_tmp_leftover(tmp_path):
@@ -244,6 +249,14 @@ def test_append_ids_file_no_tmp_leftover(tmp_path):
     append_ids_file(str(path), ['a'])
     leftovers = [p for p in tmp_path.iterdir() if p.name.endswith('.tmp')]
     assert leftovers == []
+
+
+def test_append_ids_file_resets_existing_to_pending(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a|done\n', encoding='utf-8')
+    added, total = append_ids_file(str(path), ['a'])
+    assert (added, total) == (0, 1)
+    assert path.read_text(encoding='utf-8').splitlines() == ['a|pending']
 
 
 def test_read_ids_file_reads_lines_and_skips_blanks(tmp_path):
@@ -256,18 +269,34 @@ def test_read_ids_file_missing_returns_empty(tmp_path):
     assert read_ids_file(str(tmp_path / 'missing.txt')) == []
 
 
-def test_write_ids_file_overwrites(tmp_path):
+def test_mark_ids_done_existing_and_new(tmp_path):
     path = tmp_path / 'video_ids.txt'
-    path.write_text('a\nb\n', encoding='utf-8')
-    assert write_ids_file(str(path), ['x', 'y']) == 2
-    assert path.read_text(encoding='utf-8').splitlines() == ['x', 'y']
+    path.write_text('a|pending\nb|done\n', encoding='utf-8')
+    changed = mark_ids_done(str(path), ['a', 'b', 'c'])
+    assert changed == 2
+    assert path.read_text(encoding='utf-8').splitlines() == ['a|done', 'b|done', 'c|done']
+
+
+def test_write_ids_file_preserves_status(tmp_path):
+    path = tmp_path / 'video_ids.txt'
+    path.write_text('a|done\nb|pending\n', encoding='utf-8')
+    assert write_ids_file(str(path), ['b', 'c']) == 2
+    assert path.read_text(encoding='utf-8').splitlines() == ['b|pending', 'c|pending']
 
 
 def test_write_ids_file_empty_clears(tmp_path):
     path = tmp_path / 'video_ids.txt'
-    path.write_text('a\nb\n', encoding='utf-8')
+    path.write_text('a|pending\nb|done\n', encoding='utf-8')
     assert write_ids_file(str(path), []) == 0
     assert path.read_text(encoding='utf-8') == ''
+
+
+def test_filter_pending_ids():
+    records = [
+        {'video_id': 'a', 'status': 'pending'},
+        {'video_id': 'b', 'status': 'done'},
+    ]
+    assert filter_pending_ids(records, ['b', 'c', 'a', 'c']) == ['c', 'a']
 
 
 def test_is_valid_token():

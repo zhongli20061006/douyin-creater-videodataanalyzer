@@ -196,6 +196,7 @@ class CrawlResponse(BaseModel):
     pushed: int
     queue_length: int
     video_ids: list[str]
+    skipped: int = 0
 
 
 class VideoItem(BaseModel):
@@ -369,28 +370,30 @@ def stats_authors():
 
 @app.post('/api/crawl', response_model=CrawlResponse, dependencies=[Depends(verify_write_guard)])
 def push_crawl(req: CrawlRequest):
+    """只推 pending/新 id，推送成功后标记 done；Redis 不可用返回 503 且不标记。"""
+    cleaned = [vid.strip() for vid in req.video_ids if vid and vid.strip()]
+    records = extension_receiver.read_ids_with_status(VIDEO_IDS_PATH)
+    pushable = extension_receiver.filter_pending_ids(records, cleaned)
     try:
         r = get_redis()
         count = 0
-        valid_ids = []
-        for vid in req.video_ids:
-            vid = vid.strip()
-            if vid:
-                task = json.dumps({
-                    'url': f'https://www.douyin.com/video/{vid}',
-                    'type': req.task_type,
-                })
-                r.lpush(REDIS_START_URLS_KEY, task)
-                count += 1
-                valid_ids.append(vid)
+        for vid in pushable:
+            task = json.dumps({
+                'url': f'https://www.douyin.com/video/{vid}',
+                'type': req.task_type,
+            })
+            r.lpush(REDIS_START_URLS_KEY, task)
+            count += 1
         queue_length = r.llen(REDIS_START_URLS_KEY)
-        return CrawlResponse(
-            pushed=count,
-            queue_length=queue_length,
-            video_ids=valid_ids,
-        )
+        extension_receiver.mark_ids_done(VIDEO_IDS_PATH, pushable)
     except redis.ConnectionError:
         raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    return CrawlResponse(
+        pushed=count,
+        queue_length=queue_length,
+        video_ids=pushable,
+        skipped=len(cleaned) - count,
+    )
 
 
 @app.delete('/api/videos/{video_id}', dependencies=[Depends(verify_write_guard)])
