@@ -92,6 +92,9 @@ def build():
         p = os.path.join(OUT, rel)
         if os.path.exists(p):
             os.remove(p)
+    # 覆盖为开源版 README 与精简 requirements
+    shutil.copy2(os.path.join(ROOT, 'scripts', 'open_source_README.md'), os.path.join(OUT, 'README.md'))
+    shutil.copy2(os.path.join(ROOT, 'scripts', 'open_source_requirements.txt'), os.path.join(OUT, 'requirements.txt'))
     _trim_frontend()
     for rel in ('extension/options/options.js', 'extension/content/collect.js'):
         p = os.path.join(OUT, rel)
