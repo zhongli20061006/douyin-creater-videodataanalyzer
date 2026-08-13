@@ -34,6 +34,7 @@ const cleanupLoading = ref(false)
 const cleanupAuthors = ref<string[]>([])
 const cleanupBatchSize = ref(200)
 const authorOptions = ref<Array<{ author_id: string; author_name: string }>>([])
+let cleanupSettingsTimer: ReturnType<typeof setTimeout> | null = null
 
 const LABELS: Record<string, string> = {
   empty: '疑似无效',
@@ -81,16 +82,19 @@ async function toggleCleanup(val: boolean) {
   }
 }
 
-async function saveCleanupSettings() {
-  try {
-    await api.post('/cleanup/settings', {
-      batch_size: cleanupBatchSize.value,
-      authors: cleanupAuthors.value,
-    })
-    ElMessage.success('清理设置已保存')
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || e?.message || '保存设置失败')
-  }
+function saveCleanupSettings() {
+  if (cleanupSettingsTimer) clearTimeout(cleanupSettingsTimer)
+  cleanupSettingsTimer = setTimeout(async () => {
+    try {
+      await api.post('/cleanup/settings', {
+        batch_size: cleanupBatchSize.value,
+        authors: cleanupAuthors.value,
+      })
+      ElMessage.success('清理设置已保存')
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.detail || e?.message || '保存设置失败')
+    }
+  }, 500)
 }
 
 function onSelectionChange(rows: IssueRow[]) {
