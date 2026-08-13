@@ -124,6 +124,9 @@ cd frontend && npm run build       # 构建成功（chunk 大小警告为既有�
 - MySQL：localhost:3307/douyin_spider；Redis：localhost:6379；`video_ids.txt` 当前 450 行（含未清理的错标 author id）；
 - 扩展 API 令牌（选项页需与 `local_config.py` 的 `EXTENSION_API_TOKEN` 一致）：`fd184385866db9c80d9e74689f817cb0`；
 - 插件需在 `chrome://extensions` 重新加载、且刷新抖音页面后新代码才生效。
+- **云服务器（2026-08-13 部署中）**：公网 `47.120.36.73`（阿里云 ECS，华南2河源，Ubuntu 22.04，2C4G）；SSH 登录凭据由用户持有（**严禁写入仓库/交接文档**）；
+- 云上部署路径 `/opt/douyinpachong`（app 用户）；systemd 服务 `douyinpachong`（uvicorn 127.0.0.1:8001）；Nginx 反代 80；MySQL 127.0.0.1:3306/douyin_spider（用户 douyin_app，密码在服务器 `/root/deploy_secrets`）；Redis 127.0.0.1；云库已迁移 1503 行；面板 `http://47.120.36.73/app/` 公网可访问；
+- 云上令牌/爬虫 Cookie 在服务器 `/opt/douyinpachong/local_config.py`（600 权限，不提交）。
 
 ## 漂移警告
 
@@ -139,9 +142,13 @@ cd frontend && npm run build       # 构建成功（chunk 大小警告为既有�
 - 收藏字段已纳入：不要回退 `INSERT_COLUMNS`/`COUNT_FIELDS`/前端收藏展示；`video_ids.txt` 中错标 author 的 id 未清理（待用户决定）。
 - 定时清理开关默认关闭；开启后每 30 天按作者规则执行（作者多选 + 自定义条数，均存 Redis）；单作者行数 ≤ 条数 N 不删；删除前备份到 `CLEANUP_BACKUP_DIR`，备份失败不删；`CLEANUP_BATCH_SIZE` 仅作 Redis 缺省值（1-1000 可在前端调整）。
 - 时间检索只按 `publish_time`；不要扩展到 crawl_time/update_time 过滤（当前无此需求）。
+- 云服务器 SSH(22) 当前对全网开放，建议收紧为本地公网 IP；RDP(3389) 可删除（Linux 用不到）；
+- 云上爬虫浏览器需改无头模式（当前 `headless=False` 跑不了）；爬虫 MySQL 配置需从 local_config 读（当前 settings 写死 3307/root）；
+- 公网只读接口目前无鉴权，需补访问令牌（计划 Task 3）后再长期暴露；
+- 云上 `local_config.py`、`/root/deploy_secrets` 均不写入仓库/交接文档，凭据只在服务器本地。
 
 ## 下一步
 
-1. **开源包实测与发布**：用户在其他机器按 `release/open-source/README.md` 跑通后，review 并推送到独立开源仓库（脚本不自动 push）；当前工作分支 `codex/open-source-release` 待推送 + PR 合并；
-2. **云部署（方向 A，已确认）**：插件内置云服务器地址 + 默认令牌，服务器环境（Linux/MySQL/Redis/系统服务）、绑定/防火墙、数据迁移、README 合规声明；部署前按「部署路线」流程；
+1. **开源发布已完成**：开源包已推送到独立仓库 `zhongli20061006/douyin-data-analyzer`（main 分支）；
+2. **云部署剩余（按 docs/superpowers/plans/2026-08-13-cloud-deploy.md 执行）**：爬虫无头模式、爬虫 MySQL 配置、只读接口鉴权、云地址配置（CORS/插件）、Cookie 迁移与真机验证；
 3. 可选：`backfill_authors` 历史数据补全、开源版发布准备（默认「仅自己」模式等）、`video_ids.txt` 错标 author 清理。
