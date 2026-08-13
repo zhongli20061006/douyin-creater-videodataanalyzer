@@ -1,6 +1,7 @@
 """定时清理服务：开关/间隔判断、待删选择、备份 CSV 生成（纯逻辑）。"""
 import csv
 import io
+import json
 import os
 import tempfile
 from datetime import datetime, timedelta
@@ -67,3 +68,41 @@ def build_backup_csv(rows: list[dict]) -> str:
     for r in rows:
         writer.writerow({k: r.get(k) for k in BACKUP_FIELDS})
     return buf.getvalue()
+
+
+DEFAULT_CLEANUP_CONFIG = {
+    'enabled': False,
+    'last_clean_time': None,
+    'batch_size': CLEANUP_BATCH_SIZE,
+    'authors': [],
+}
+
+
+def read_cleanup_config(path: str) -> dict:
+    """读取清理配置；文件不存在或解析失败返回默认配置。"""
+    if not os.path.exists(path):
+        return dict(DEFAULT_CLEANUP_CONFIG)
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return dict(DEFAULT_CLEANUP_CONFIG)
+    cfg = dict(DEFAULT_CLEANUP_CONFIG)
+    cfg.update({k: data[k] for k in cfg if k in data})
+    return cfg
+
+
+def write_cleanup_config(path: str, config: dict) -> None:
+    """原子写入清理配置：写临时文件 + os.replace。"""
+    directory = os.path.dirname(path) or '.'
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix='.cleanup_config.', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise

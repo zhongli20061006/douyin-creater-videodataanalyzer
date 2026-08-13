@@ -3,6 +3,9 @@ import os
 import subprocess
 import threading
 import time as time_module
+import csv
+import io
+import tempfile
 from contextlib import asynccontextmanager
 import pymysql
 import redis
@@ -12,7 +15,7 @@ from typing import Optional
 from fastapi import FastAPI, Query, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 import quality as quality_service
@@ -21,38 +24,51 @@ import queue_service
 import extension_receiver
 import analyzer
 import cleanup_service
+import export_service
 from time_filter import build_publish_filter
 
-os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
-
-try:
-    from scrapy.utils.project import get_project_settings
-    settings = get_project_settings()
-    MYSQL_HOST = settings.get('MYSQL_HOST', 'localhost')
-    MYSQL_PORT = settings.getint('MYSQL_PORT', 3307)
-    MYSQL_USER = settings.get('MYSQL_USER', 'root')
-    MYSQL_PASSWORD = settings.get('MYSQL_PASSWORD', '')
-    MYSQL_DB = settings.get('MYSQL_DB', 'douyin_spider')
-    REDIS_HOST = settings.get('REDIS_HOST', 'localhost')
-    REDIS_PORT = settings.getint('REDIS_PORT', 6379)
-    REDIS_PARAMS = settings.getdict('REDIS_PARAMS', {})
-    REDIS_START_URLS_KEY = settings.get('REDIS_START_URLS_KEY', 'douyin:start_urls')
-except Exception:
-    MYSQL_HOST = 'localhost'
-    MYSQL_PORT = 3307
-    MYSQL_USER = 'root'
-    MYSQL_PASSWORD = ''
-    MYSQL_DB = 'douyin_spider'
-    REDIS_HOST = 'localhost'
-    REDIS_PORT = 6379
-    REDIS_PARAMS = {}
+MYSQL_HOST = 'localhost'
+MYSQL_PORT = 3307
+MYSQL_USER = 'root'
+MYSQL_PASSWORD = ''
+MYSQL_DB = 'douyin_spider'
+REDIS_HOST = 'localhost'
+REDIS_PORT = 6379
+REDIS_PARAMS = {}
 REDIS_START_URLS_KEY = 'douyin:start_urls'
+
+# 优先从 local_config 读 MySQL 配置（开源版无 Scrapy）；缺失时回退 Scrapy settings。
+try:
+    from local_config import (
+        MYSQL_HOST as _H, MYSQL_PORT as _P, MYSQL_USER as _U,
+        MYSQL_PASSWORD as _PW, MYSQL_DB as _DB,
+    )
+    MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DB = _H, _P, _U, _PW, _DB
+except ImportError:
+    try:
+        from scrapy.utils.project import get_project_settings
+        _s = get_project_settings()
+        MYSQL_HOST = _s.get('MYSQL_HOST', MYSQL_HOST)
+        MYSQL_PORT = _s.getint('MYSQL_PORT', MYSQL_PORT)
+        MYSQL_USER = _s.get('MYSQL_USER', MYSQL_USER)
+        MYSQL_PASSWORD = _s.get('MYSQL_PASSWORD', MYSQL_PASSWORD)
+        MYSQL_DB = _s.get('MYSQL_DB', MYSQL_DB)
+        REDIS_HOST = _s.get('REDIS_HOST', REDIS_HOST)
+        REDIS_PORT = _s.getint('REDIS_PORT', REDIS_PORT)
+        REDIS_PARAMS = _s.getdict('REDIS_PARAMS', {})
+        REDIS_START_URLS_KEY = _s.get('REDIS_START_URLS_KEY', REDIS_START_URLS_KEY)
+    except Exception:
+        pass
+
 VIDEO_IDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video_ids.txt')
+CLEANUP_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cleanup_config.json')
 
 try:
-    from local_config import EXTENSION_API_TOKEN
+    from local_config import EXTENSION_API_TOKEN, ALLOWED_AUTHOR_IDS, CLEANUP_STORAGE
 except Exception:
     EXTENSION_API_TOKEN = ''
+    ALLOWED_AUTHOR_IDS = []
+    CLEANUP_STORAGE = 'redis'
 
 ALLOWED_ORIGINS = [
     'http://127.0.0.1:8001',
@@ -62,9 +78,9 @@ ALLOWED_ORIGINS = [
 
 def _cleanup_once() -> None:
     """执行一次清理检查：满足条件则按作者规则备份并删除。"""
-    r = get_redis()
-    enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
-    last_raw = r.get('douyin:cleanup_last_time')
+    cfg = _read_cleanup_config()
+    enabled = bool(cfg['enabled'])
+    last_raw = cfg['last_clean_time']
     last = None
     if last_raw:
         try:
@@ -73,9 +89,8 @@ def _cleanup_once() -> None:
             last = None
     if not cleanup_service.should_run_cleanup(enabled, last, datetime.now()):
         return
-    batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
-    authors_raw = r.get('douyin:cleanup_authors')
-    authors = json.loads(authors_raw) if authors_raw else []
+    batch_size = int(cfg['batch_size'])
+    authors = list(cfg['authors'])
 
     db = get_db()
     try:
@@ -128,7 +143,8 @@ def _cleanup_once() -> None:
     finally:
         db_close(db)
 
-    r.set('douyin:cleanup_last_time', datetime.now().isoformat(timespec='seconds'))
+    cfg['last_clean_time'] = datetime.now().isoformat(timespec='seconds')
+    _write_cleanup_config(cfg)
     print(f'定时清理完成：删除 {len(ids)} 条，备份 {backup_path}')
 
 
@@ -204,6 +220,42 @@ def apply_publish_filter(start_date: str, end_date: str):
         return build_publish_filter(start_date or None, end_date or None)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def _check_export_total(total: int) -> None:
+    if total > export_service.EXPORT_MAX_ROWS:
+        raise HTTPException(status_code=400, detail=f'数据量过大（{total} 条），请缩小筛选范围后导出')
+
+
+def _read_cleanup_config() -> dict:
+    """读取清理配置：本地版默认 Redis，开源版（CLEANUP_STORAGE=json）用 JSON 文件。"""
+    if CLEANUP_STORAGE == 'json':
+        return cleanup_service.read_cleanup_config(CLEANUP_CONFIG_PATH)
+    r = get_redis()
+    enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
+    last_clean_time = r.get('douyin:cleanup_last_time')
+    batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
+    authors_raw = r.get('douyin:cleanup_authors')
+    authors = json.loads(authors_raw) if authors_raw else []
+    return {
+        'enabled': enabled,
+        'last_clean_time': last_clean_time,
+        'batch_size': batch_size,
+        'authors': authors,
+    }
+
+
+def _write_cleanup_config(cfg: dict) -> None:
+    """写清理配置：与 _read_cleanup_config 对应的双存储。"""
+    if CLEANUP_STORAGE == 'json':
+        cleanup_service.write_cleanup_config(CLEANUP_CONFIG_PATH, cfg)
+        return
+    r = get_redis()
+    r.set('douyin:cleanup_enabled', '1' if cfg.get('enabled') else '0')
+    if cfg.get('last_clean_time'):
+        r.set('douyin:cleanup_last_time', cfg['last_clean_time'])
+    r.set('douyin:cleanup_batch_size', str(cfg.get('batch_size', cleanup_service.CLEANUP_BATCH_SIZE)))
+    r.set('douyin:cleanup_authors', json.dumps(list(cfg.get('authors', []))))
 
 
 def db_close(db):
@@ -361,6 +413,7 @@ def list_videos(
     order_clause = 'DESC' if order == 'desc' else 'ASC'
     offset = (page - 1) * page_size
     publish_clause, publish_params = apply_publish_filter(start_date, end_date)
+    author_clause, author_params = extension_receiver.build_author_filter(ALLOWED_AUTHOR_IDS)
 
     db = get_db()
     try:
@@ -372,6 +425,9 @@ def list_videos(
                 if publish_clause:
                     where_parts.append(publish_clause)
                     count_params.extend(publish_params)
+                if author_clause:
+                    where_parts.append(author_clause)
+                    count_params.extend(author_params)
                 where_sql = ' AND '.join(where_parts)
                 count_sql = f'SELECT COUNT(*) AS total FROM video_info WHERE {where_sql}'
                 cursor.execute(count_sql, tuple(count_params))
@@ -390,6 +446,9 @@ def list_videos(
                 if publish_clause:
                     where_parts.append(publish_clause)
                     count_params.extend(publish_params)
+                if author_clause:
+                    where_parts.append(author_clause)
+                    count_params.extend(author_params)
                 where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
                 cursor.execute(f'SELECT COUNT(*) AS total FROM video_info {where_sql}', tuple(count_params))
                 total = cursor.fetchone()['total']
@@ -750,6 +809,8 @@ def extension_receive(req: ExtensionVideosRequest):
     if not valid and not rejected:
         raise HTTPException(status_code=400, detail='没有可处理的记录')
     records = extension_receiver.dedupe_records(valid)
+    records, author_rejected = extension_receiver.filter_by_author_whitelist(records, ALLOWED_AUTHOR_IDS)
+    rejected.extend(author_rejected)
     db = get_db()
     try:
         with db.cursor() as cursor:
@@ -871,13 +932,19 @@ def analyze_authors():
     db = get_db()
     try:
         with db.cursor() as cursor:
-            cursor.execute("""
+            author_clause, author_params = extension_receiver.build_author_filter(ALLOWED_AUTHOR_IDS)
+            where_sql = 'author_id IS NOT NULL AND author_id <> \'\''
+            params = []
+            if author_clause:
+                where_sql += ' AND ' + author_clause
+                params.extend(author_params)
+            cursor.execute(f"""
                 SELECT author_id, author_name, COUNT(*) AS count
                 FROM video_info
-                WHERE author_id IS NOT NULL AND author_id <> ''
+                WHERE {where_sql}
                 GROUP BY author_id, author_name
                 ORDER BY count DESC
-            """)
+            """, tuple(params))
             rows = cursor.fetchall()
     finally:
         db_close(db)
@@ -898,11 +965,15 @@ def analyze_personal(
     try:
         with db.cursor() as cursor:
             publish_clause, publish_params = apply_publish_filter(start_date, end_date)
+            author_clause, author_params = extension_receiver.build_author_filter(ALLOWED_AUTHOR_IDS)
             where_sql = 'author_id = %s'
             where_params = [author_id]
             if publish_clause:
                 where_sql += ' AND ' + publish_clause
                 where_params.extend(publish_params)
+            if author_clause:
+                where_sql += ' AND ' + author_clause
+                where_params.extend(author_params)
             cursor.execute(f'SELECT * FROM video_info WHERE {where_sql}', tuple(where_params))
             rows = cursor.fetchall()
     finally:
@@ -918,6 +989,101 @@ def analyze_personal(
     }
 
 
+@app.get('/api/export')
+def export_data(
+    search: str = Query('', description='搜索视频标题/作者/ID'),
+    sort_by: str = Query('crawl_time', description='排序字段'),
+    order: str = Query('desc', pattern='^(asc|desc)$'),
+    start_date: str = Query('', description='发布时间起始（YYYY-MM-DD）'),
+    end_date: str = Query('', description='发布时间结束（YYYY-MM-DD）'),
+    format: str = Query('csv', pattern='^(csv|xlsx)$'),
+):
+    """导出当前筛选结果（与 /api/videos 同参数，不分页，上限 10000）。"""
+    allowed_sort = {
+        'video_id', 'video_title', 'author_name', 'publish_time',
+        'like_count', 'comment_count', 'share_count', 'play_count', 'collect_count',
+        'crawl_time', 'update_time',
+    }
+    if sort_by not in allowed_sort:
+        sort_by = 'crawl_time'
+    order_clause = 'DESC' if order == 'desc' else 'ASC'
+    publish_clause, publish_params = apply_publish_filter(start_date, end_date)
+    where_parts = []
+    params = []
+    if search:
+        where_parts.append('(video_id LIKE %s OR video_title LIKE %s OR author_name LIKE %s)')
+        params.extend([f'%{search}%'] * 3)
+    if publish_clause:
+        where_parts.append(publish_clause)
+        params.extend(publish_params)
+    where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
+
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute(f'SELECT COUNT(*) AS n FROM video_info {where_sql}', tuple(params))
+            total = cursor.fetchone()['n']
+        _check_export_total(total)
+        if format == 'csv':
+            def gen():
+                conn = get_db()
+                try:
+                    with conn.cursor(pymysql.cursors.SSCursor) as cursor:
+                        cursor.execute(
+                            f'SELECT * FROM video_info {where_sql} ORDER BY {sort_by} {order_clause}',
+                            tuple(params),
+                        )
+                        buf = io.StringIO()
+                        buf.write('\ufeff')
+                        writer = csv.DictWriter(buf, fieldnames=export_service.EXPORT_COLUMNS, extrasaction='ignore')
+                        writer.writeheader()
+                        yield buf.getvalue()
+                        while True:
+                            batch = cursor.fetchmany(1000)
+                            if not batch:
+                                break
+                            buf = io.StringIO()
+                            writer = csv.DictWriter(buf, fieldnames=export_service.EXPORT_COLUMNS, extrasaction='ignore')
+                            for row in batch:
+                                writer.writerow({c: ('' if row.get(c) is None else row.get(c)) for c in export_service.EXPORT_COLUMNS})
+                            yield buf.getvalue()
+                finally:
+                    db_close(conn)
+            return StreamingResponse(
+                gen(), media_type='text/csv; charset=utf-8',
+                headers={'Content-Disposition': 'attachment; filename="douyin_data.csv"'},
+            )
+        tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+        tmp.close()
+        from openpyxl import Workbook
+        wb = Workbook(write_only=True)
+        ws = wb.create_sheet()
+        ws.append(list(export_service.EXPORT_COLUMNS))
+        conn = get_db()
+        try:
+            with conn.cursor(pymysql.cursors.SSCursor) as cursor:
+                cursor.execute(
+                    f'SELECT * FROM video_info {where_sql} ORDER BY {sort_by} {order_clause}',
+                    tuple(params),
+                )
+                while True:
+                    batch = cursor.fetchmany(1000)
+                    if not batch:
+                        break
+                    for row in batch:
+                        ws.append([('' if row.get(c) is None else row.get(c)) for c in export_service.EXPORT_COLUMNS])
+        finally:
+            db_close(conn)
+        wb.save(tmp.name)
+        return FileResponse(
+            tmp.name,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            filename='douyin_data.xlsx',
+        )
+    finally:
+        db_close(db)
+
+
 class CleanupToggleRequest(BaseModel):
     enabled: bool
 
@@ -925,31 +1091,21 @@ class CleanupToggleRequest(BaseModel):
 @app.get('/api/cleanup/status')
 def cleanup_status():
     """返回定时清理开关、上次执行时间、条数与指定作者。"""
-    try:
-        r = get_redis()
-        enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
-        last_clean_time = r.get('douyin:cleanup_last_time')
-        batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
-        authors_raw = r.get('douyin:cleanup_authors')
-        authors = json.loads(authors_raw) if authors_raw else []
-    except redis.ConnectionError:
-        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    cfg = _read_cleanup_config()
     return {
-        'enabled': enabled,
-        'last_clean_time': last_clean_time,
-        'batch_size': batch_size,
-        'authors': authors,
+        'enabled': bool(cfg['enabled']),
+        'last_clean_time': cfg['last_clean_time'],
+        'batch_size': int(cfg['batch_size']),
+        'authors': list(cfg['authors']),
     }
 
 
 @app.post('/api/cleanup/toggle', dependencies=[Depends(verify_write_guard)])
 def cleanup_toggle(req: CleanupToggleRequest):
     """切换定时清理开关（写接口，走令牌守卫）。"""
-    try:
-        r = get_redis()
-        r.set('douyin:cleanup_enabled', '1' if req.enabled else '0')
-    except redis.ConnectionError:
-        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    cfg = _read_cleanup_config()
+    cfg['enabled'] = req.enabled
+    _write_cleanup_config(cfg)
     return {'enabled': req.enabled}
 
 
@@ -963,12 +1119,10 @@ def cleanup_settings(req: CleanupSettingsRequest):
     """保存清理条数与指定作者（空 authors = 全部作者）。"""
     if not (1 <= req.batch_size <= 1000):
         raise HTTPException(status_code=400, detail='batch_size 必须在 1-1000 之间')
-    try:
-        r = get_redis()
-        r.set('douyin:cleanup_batch_size', str(req.batch_size))
-        r.set('douyin:cleanup_authors', json.dumps(req.authors))
-    except redis.ConnectionError:
-        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    cfg = _read_cleanup_config()
+    cfg['batch_size'] = req.batch_size
+    cfg['authors'] = list(req.authors)
+    _write_cleanup_config(cfg)
     return {'batch_size': req.batch_size, 'authors': req.authors}
 
 

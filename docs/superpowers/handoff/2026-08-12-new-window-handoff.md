@@ -93,6 +93,14 @@ b9c0709 feat: 后端绑定 127.0.0.1 + 扩展写接口令牌鉴权（fail-closed
 ### 文档
 - specs/plans 若干（见 Current Truth）；README 补充后端安全、video_ids 状态、上报机制。
 
+### 开源版发布准备（2026-08-13，本窗口新增，分支 `codex/open-source-release`）
+
+- **导出**：新增 `export_service.py` 与 `GET /api/export`（当前筛选结果 CSV/Excel，上限 10000、CSV 流式、xlsx 临时文件）；视频数据页加「导出 CSV/Excel」按钮；
+- **服务端作者白名单**：`ALLOWED_AUTHOR_IDS`（非空时后端拒绝白名单外作者，空 = 本地不限制）；
+- **清理配置双存储**：本地版 `CLEANUP_STORAGE='redis'`（默认），开源版 `'json'`（本地 `cleanup_config.json`，无 Redis）；
+- **发布脚本**：`scripts/build_open_source_release.py` 白名单复制 + 裁剪（去爬虫/队列/收集/质量/总览，前端只留视频数据+个人分析）+ 插件默认模式改「仅自己」+ `CLEANUP_STORAGE` 改 json + npm 构建 dist + 覆盖精简 README/requirements，输出 `release/open-source/`（不自动 push）；
+- 开源包已生成并验证：无 `douyin_spider/` 等、`frontend/dist` 存在、插件默认 `limited`、`CLEANUP_STORAGE='json'`；待用户在其他机器实测。
+
 ## 变更文件
 
 工作树干净，无未提交/未跟踪文件（用户截图此前已由用户自行删除）。
@@ -102,7 +110,7 @@ b9c0709 feat: 后端绑定 127.0.0.1 + 扩展写接口令牌鉴权（fail-closed
 已通过（本窗口最近一次，2026-08-12）：
 ```bash
 cd extension && node --test        # 32 passed
-.\.venv\Scripts\python.exe -m pytest -q   # 150 passed（1 条 pandas/pyarrow 既有警告）
+.\.venv\Scripts\python.exe -m pytest -q   # 160 passed（1 条 pandas/pyarrow 既有警告）
 cd frontend && npm run build       # 构建成功（chunk 大小警告为既有提示）
 ```
 
@@ -134,6 +142,6 @@ cd frontend && npm run build       # 构建成功（chunk 大小警告为既有�
 
 ## 下一步
 
-1. **云部署（方向 A，已确认）**：插件内置云服务器地址 + 默认令牌，服务器环境（Linux/MySQL/Redis/系统服务）、绑定/防火墙、数据迁移、README 合规声明；部署前按「部署路线」流程；
-2. **PR 收尾已完成**：PR #1/#2/#3 均已合并到 master，功能分支已清理（本地与远端均删除），当前工作分支 `codex/time-filter-cleanup` 待合并（推送 + PR 后处理）；
+1. **开源包实测与发布**：用户在其他机器按 `release/open-source/README.md` 跑通后，review 并推送到独立开源仓库（脚本不自动 push）；当前工作分支 `codex/open-source-release` 待推送 + PR 合并；
+2. **云部署（方向 A，已确认）**：插件内置云服务器地址 + 默认令牌，服务器环境（Linux/MySQL/Redis/系统服务）、绑定/防火墙、数据迁移、README 合规声明；部署前按「部署路线」流程；
 3. 可选：`backfill_authors` 历史数据补全、开源版发布准备（默认「仅自己」模式等）、`video_ids.txt` 错标 author 清理。

@@ -102,6 +102,27 @@ function clearSearch() {
   doSearch()
 }
 
+function buildExportUrl(format: string) {
+  const params = new URLSearchParams()
+  if (search.value) params.set('search', search.value)
+  if (sortBy.value) params.set('sort_by', sortBy.value)
+  if (order.value) params.set('order', order.value)
+  if (dateRange.value) {
+    params.set('start_date', dateRange.value[0])
+    params.set('end_date', dateRange.value[1])
+  }
+  params.set('format', format)
+  return `/api/export?${params.toString()}`
+}
+
+function exportCsv() {
+  window.location.href = buildExportUrl('csv')
+}
+
+function exportXlsx() {
+  window.location.href = buildExportUrl('xlsx')
+}
+
 function fmtNum(n?: number) {
   if (!n) return '0'
   if (n >= 10000) return (n / 10000).toFixed(1) + '万'
@@ -216,6 +237,8 @@ onMounted(() => {
         <el-option label="升序" value="asc" />
       </el-select>
       <el-button :loading="loading" @click="load">刷新</el-button>
+      <el-button @click="exportCsv">导出 CSV</el-button>
+      <el-button @click="exportXlsx">导出 Excel</el-button>
     </el-card>
 
     <el-card shadow="never" class="v-card">
