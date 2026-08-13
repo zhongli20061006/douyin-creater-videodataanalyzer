@@ -9,6 +9,7 @@ from extension_receiver import (
     build_upsert,
     dedupe_records,
     evaluate_write_guard,
+    filter_by_author_whitelist,
     filter_pending_ids,
     is_allowed_origin,
     is_valid_token,
@@ -400,6 +401,23 @@ def test_evaluate_write_guard_allows_valid_token():
     allowed = ['http://127.0.0.1:8001']
     ok, status, reason = evaluate_write_guard('https://www.douyin.com', 'secret', 'secret', allowed)
     assert ok is True and status is None and reason is None
+
+
+def test_filter_by_author_whitelist_empty_returns_all():
+    records = [{'video_id': '1', 'author_id': 'A'}]
+    kept, rejected = filter_by_author_whitelist(records, [])
+    assert kept == records and rejected == []
+
+
+def test_filter_by_author_whitelist_rejects_other_and_empty():
+    records = [
+        {'video_id': '1', 'author_id': 'A'},
+        {'video_id': '2', 'author_id': 'B'},
+        {'video_id': '3', 'author_id': ''},
+    ]
+    kept, rejected = filter_by_author_whitelist(records, ['A'])
+    assert [r['video_id'] for r in kept] == ['1']
+    assert {r['video_id'] for r in rejected} == {'2', '3'}
 
 
 def test_normalize_record_accepts_collect_count():

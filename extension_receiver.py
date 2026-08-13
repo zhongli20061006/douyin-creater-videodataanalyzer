@@ -449,3 +449,19 @@ def attach_author_names(items: list[dict], author_map: dict) -> list[dict]:
         row['author_name'] = author_map.get(row.get('author_id') or '', '')
         result.append(row)
     return result
+
+
+def filter_by_author_whitelist(records: list[dict], allowed_author_ids: list) -> tuple[list[dict], list[dict]]:
+    """按作者白名单过滤；白名单为空原样返回；非空时拒绝 author_id 为空或不在列表的记录。"""
+    if not allowed_author_ids:
+        return records, []
+    allowed = {str(a) for a in allowed_author_ids}
+    kept = []
+    rejected = []
+    for r in records:
+        aid = str(r.get('author_id') or '')
+        if aid in allowed:
+            kept.append(r)
+        else:
+            rejected.append({'video_id': r.get('video_id', ''), 'reason': '作者不在允许列表内'})
+    return kept, rejected

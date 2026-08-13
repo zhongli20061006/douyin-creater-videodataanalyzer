@@ -51,9 +51,10 @@ VIDEO_IDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video
 CLEANUP_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cleanup_config.json')
 
 try:
-    from local_config import EXTENSION_API_TOKEN
+    from local_config import EXTENSION_API_TOKEN, ALLOWED_AUTHOR_IDS
 except Exception:
     EXTENSION_API_TOKEN = ''
+    ALLOWED_AUTHOR_IDS = []
 
 ALLOWED_ORIGINS = [
     'http://127.0.0.1:8001',
@@ -751,6 +752,8 @@ def extension_receive(req: ExtensionVideosRequest):
     if not valid and not rejected:
         raise HTTPException(status_code=400, detail='没有可处理的记录')
     records = extension_receiver.dedupe_records(valid)
+    records, author_rejected = extension_receiver.filter_by_author_whitelist(records, ALLOWED_AUTHOR_IDS)
+    rejected.extend(author_rejected)
     db = get_db()
     try:
         with db.cursor() as cursor:
