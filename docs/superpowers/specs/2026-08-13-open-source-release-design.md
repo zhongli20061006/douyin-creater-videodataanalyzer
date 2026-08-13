@@ -50,6 +50,16 @@
 
 ## 4. 关键改动
 
+### 4.0 服务端作者白名单校验（安全边界，双重保险）
+
+- `local_config.example.py` 新增 `ALLOWED_AUTHOR_IDS`（作者 uid 列表，与插件上报的 `author_id` 一致）：
+  ```python
+  ALLOWED_AUTHOR_IDS = ['你的抖音作者 uid']
+  ```
+- `api.py` 的 `extension_receive` 在写入前校验：当 `ALLOWED_AUTHOR_IDS` 非空时，每条记录的 `author_id` 必须在白名单内，否则整条/整批拒绝并返回 403（详情见实施计划，倾向逐条 rejected 记录原因，保留可入库的其他记录）；
+- 语义：`ALLOWED_AUTHOR_IDS` 为空 = 不启用服务端作者白名单（主仓库本地开发保持 unlimited）；非空 = 即使插件被改回 unlimited，后端也拒绝白名单外作者的数据；
+- 开源版 README 与 example 强要求填写自己的 uid，说明「填写后即使改插件也无法采集他人数据」。
+
 ### 4.1 定时清理配置 JSON 化（主仓库 + 开源版）
 
 - 新增配置文件 `cleanup_config.json`（项目根目录，`.gitignore` 排除，运行时本地生成）：
@@ -64,6 +74,7 @@
 - `cleanup_service.py` 新增线程安全的 JSON 读写函数（文件锁 + 原子写，沿用 `extension_receiver` 的 ids 文件锁模式）：
   - `read_cleanup_config(path) -> dict`
   - `write_cleanup_config(path, config: dict) -> None`
+- 文件锁复用 `extension_receiver` 现有跨平台实现（POSIX 用 `fcntl`、Windows 用 `msvcrt.locking`），**不引入第三方 filelock 依赖**；写操作用临时文件 + `os.replace` 原子替换；
 - `api.py` 的 `cleanup_status` / `cleanup_toggle` / `cleanup_settings` / `_cleanup_once` 从 JSON 文件读写，替换原 Redis 读写；`CLEANUP_CONFIG_PATH` 常量指向项目根目录；
 - 主仓库移除 Redis 作为清理配置存储的用法（Redis 仍保留给爬虫队列，但清理不再依赖 Redis，开源版彻底无 Redis）。
 
@@ -72,6 +83,8 @@
 - 新增 `export_service.py`：把 `quality.py` 的 `build_csv` / `build_xlsx` 与 `EXPORT_COLUMNS`（含 collect_count）抽出，列与现在一致；
 - 新增 `GET /api/export`：参数复用 `/api/videos` 的 search/sort_by/order/start_date/end_date（不含分页，导出全部匹配行），返回 CSV 或 xlsx 附件；
 - 前端 `Videos.vue` 加「导出 CSV」「导出 Excel」按钮，用 `window.location.href` 指向 `/api/export`（携带当前 search/sort_by/order/start_date/end_date 参数），由后端返回附件下载；
+- **导出上限**：匹配行数超过 `EXPORT_MAX_ROWS = 10000` 时返回 400「数据量过大，请缩小筛选范围后导出」，避免超大结果打爆内存；
+- **流式处理**：CSV 用 `SSCursor` 分批 `fetchmany` + 生成器 + FastAPI `StreamingResponse` 边读边写；xlsx 用 `openpyxl` WriteOnly 模式写临时文件后返回，内存占用与总行数解耦；
 - 主仓库 `Quality.vue` 的导出入口保留（避免重复实现，统一指向 `/api/export` 或保留原 `/api/quality/export`；本设计统一新增 `/api/export`，质量页后续可切到同一接口）。
 
 ### 4.3 插件默认模式与描述
@@ -98,6 +111,7 @@
 - 说明：插件默认「仅自己」、后端本地运行、时间检索、收藏率、定时清理、导出；
 - 合规声明保留并置于显眼位置；
 - 移除爬虫/队列/Playwright 相关说明。
+- **新手上路**：给出可直接复制的「黑框命令」快速启动流程（安装依赖 → 复制并填写 `local_config.py`（含 `ALLOWED_AUTHOR_IDS`）→ 启动后端 → 加载 Chrome 插件），确保普通用户 5 分钟内跑起来。
 
 ## 5. 发布脚本设计（`scripts/build_open_source_release.py`）
 
@@ -108,8 +122,9 @@
   2. 替换插件默认模式 `unlimited` → `limited`；
   3. 写入精简后的 `requirements.txt`；
   4. 生成 README 开源版说明（若与主仓库 README 不同）；
-  5. 在输出目录初始化 git、写 `.gitignore`；
-  6. 打印「复制完成，请 review 后推送到开源仓库」提示（**不自动 push**，推送由用户确认）。
+  5. 在输出目录执行 `npm install` 与 `npm run build`，把 `frontend/dist` 完整复制进开源包（保证开源用户无需本地构建即可跑前端）；
+  6. 在输出目录初始化 git、写 `.gitignore`；
+  7. 打印「复制完成，请 review 后推送到开源仓库」提示（**不自动 push**，推送由用户确认）。
 - 脚本本身保留在主仓库，不进开源包。
 
 ## 6. 测试策略（T2 严格 TDD）
