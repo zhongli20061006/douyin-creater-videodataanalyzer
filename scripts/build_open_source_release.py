@@ -100,6 +100,7 @@ def build():
     # 覆盖为开源版 README 与精简 requirements
     shutil.copy2(os.path.join(ROOT, 'scripts', 'open_source_README.md'), os.path.join(OUT, 'README.md'))
     shutil.copy2(os.path.join(ROOT, 'scripts', 'open_source_requirements.txt'), os.path.join(OUT, 'requirements.txt'))
+    shutil.copy2(os.path.join(ROOT, 'scripts', 'open_source_api.py'), os.path.join(OUT, 'api.py'))
     example = os.path.join(OUT, 'local_config.example.py')
     with open(example, 'r', encoding='utf-8') as f:
         text = f.read()
