@@ -3,6 +3,9 @@ import os
 import subprocess
 import threading
 import time as time_module
+import csv
+import io
+import tempfile
 from contextlib import asynccontextmanager
 import pymysql
 import redis
@@ -12,7 +15,7 @@ from typing import Optional
 from fastapi import FastAPI, Query, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 import quality as quality_service
@@ -21,6 +24,7 @@ import queue_service
 import extension_receiver
 import analyzer
 import cleanup_service
+import export_service
 from time_filter import build_publish_filter
 
 os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
@@ -206,6 +210,11 @@ def apply_publish_filter(start_date: str, end_date: str):
         return build_publish_filter(start_date or None, end_date or None)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def _check_export_total(total: int) -> None:
+    if total > export_service.EXPORT_MAX_ROWS:
+        raise HTTPException(status_code=400, detail=f'数据量过大（{total} 条），请缩小筛选范围后导出')
 
 
 def db_close(db):
@@ -920,6 +929,101 @@ def analyze_personal(
         'play_trend': analyzer.build_play_trend(rows),
         'top_videos': analyzer.top_videos(rows, sort_by=sort_by),
     }
+
+
+@app.get('/api/export')
+def export_data(
+    search: str = Query('', description='搜索视频标题/作者/ID'),
+    sort_by: str = Query('crawl_time', description='排序字段'),
+    order: str = Query('desc', pattern='^(asc|desc)$'),
+    start_date: str = Query('', description='发布时间起始（YYYY-MM-DD）'),
+    end_date: str = Query('', description='发布时间结束（YYYY-MM-DD）'),
+    format: str = Query('csv', pattern='^(csv|xlsx)$'),
+):
+    """导出当前筛选结果（与 /api/videos 同参数，不分页，上限 10000）。"""
+    allowed_sort = {
+        'video_id', 'video_title', 'author_name', 'publish_time',
+        'like_count', 'comment_count', 'share_count', 'play_count', 'collect_count',
+        'crawl_time', 'update_time',
+    }
+    if sort_by not in allowed_sort:
+        sort_by = 'crawl_time'
+    order_clause = 'DESC' if order == 'desc' else 'ASC'
+    publish_clause, publish_params = apply_publish_filter(start_date, end_date)
+    where_parts = []
+    params = []
+    if search:
+        where_parts.append('(video_id LIKE %s OR video_title LIKE %s OR author_name LIKE %s)')
+        params.extend([f'%{search}%'] * 3)
+    if publish_clause:
+        where_parts.append(publish_clause)
+        params.extend(publish_params)
+    where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
+
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            cursor.execute(f'SELECT COUNT(*) AS n FROM video_info {where_sql}', tuple(params))
+            total = cursor.fetchone()['n']
+        _check_export_total(total)
+        if format == 'csv':
+            def gen():
+                conn = get_db()
+                try:
+                    with conn.cursor(pymysql.cursors.SSCursor) as cursor:
+                        cursor.execute(
+                            f'SELECT * FROM video_info {where_sql} ORDER BY {sort_by} {order_clause}',
+                            tuple(params),
+                        )
+                        buf = io.StringIO()
+                        buf.write('\ufeff')
+                        writer = csv.DictWriter(buf, fieldnames=export_service.EXPORT_COLUMNS, extrasaction='ignore')
+                        writer.writeheader()
+                        yield buf.getvalue()
+                        while True:
+                            batch = cursor.fetchmany(1000)
+                            if not batch:
+                                break
+                            buf = io.StringIO()
+                            writer = csv.DictWriter(buf, fieldnames=export_service.EXPORT_COLUMNS, extrasaction='ignore')
+                            for row in batch:
+                                writer.writerow({c: ('' if row.get(c) is None else row.get(c)) for c in export_service.EXPORT_COLUMNS})
+                            yield buf.getvalue()
+                finally:
+                    db_close(conn)
+            return StreamingResponse(
+                gen(), media_type='text/csv; charset=utf-8',
+                headers={'Content-Disposition': 'attachment; filename="douyin_data.csv"'},
+            )
+        tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+        tmp.close()
+        from openpyxl import Workbook
+        wb = Workbook(write_only=True)
+        ws = wb.create_sheet()
+        ws.append(list(export_service.EXPORT_COLUMNS))
+        conn = get_db()
+        try:
+            with conn.cursor(pymysql.cursors.SSCursor) as cursor:
+                cursor.execute(
+                    f'SELECT * FROM video_info {where_sql} ORDER BY {sort_by} {order_clause}',
+                    tuple(params),
+                )
+                while True:
+                    batch = cursor.fetchmany(1000)
+                    if not batch:
+                        break
+                    for row in batch:
+                        ws.append([('' if row.get(c) is None else row.get(c)) for c in export_service.EXPORT_COLUMNS])
+        finally:
+            db_close(conn)
+        wb.save(tmp.name)
+        return FileResponse(
+            tmp.name,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            filename='douyin_data.xlsx',
+        )
+    finally:
+        db_close(db)
 
 
 class CleanupToggleRequest(BaseModel):
