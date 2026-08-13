@@ -54,3 +54,6 @@ extension/node_modules/
 
 # 生成的文档产物（源码 generate_doc.py 保留）
 *.docx
+
+# 开源发布产物
+release/

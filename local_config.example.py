@@ -18,3 +18,6 @@ EXTENSION_API_TOKEN = '请设置一段随机字符串'
 # 即使插件被改为无限制也无法采集他人数据（合规双保险）。
 # 留空 = 不启用服务端白名单（本地开发版默认，便于采集任意作者对照）。
 ALLOWED_AUTHOR_IDS = ['你的抖音作者 uid']
+
+# 清理配置存储后端：'redis' = 本地开发版默认；'json' = 开源版（无 Redis 依赖）。
+CLEANUP_STORAGE = 'redis'

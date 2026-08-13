@@ -9,6 +9,7 @@ import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, 'release', 'open-source')
+NPM = 'npm.cmd' if os.name == 'nt' else 'npm'
 
 KEEP_FILES = [
     'api.py', 'analyzer.py', 'cleanup_service.py', 'export_service.py',
@@ -30,6 +31,10 @@ EXCLUDE_FILES = [
 
 def replace_default_mode(text: str) -> str:
     return text.replace("'unlimited'", "'limited'").replace('"unlimited"', '"limited"')
+
+
+def replace_cleanup_storage(text: str) -> str:
+    return text.replace("CLEANUP_STORAGE = 'redis'", "CLEANUP_STORAGE = 'json'")
 
 
 def _copy(path):
@@ -95,6 +100,11 @@ def build():
     # 覆盖为开源版 README 与精简 requirements
     shutil.copy2(os.path.join(ROOT, 'scripts', 'open_source_README.md'), os.path.join(OUT, 'README.md'))
     shutil.copy2(os.path.join(ROOT, 'scripts', 'open_source_requirements.txt'), os.path.join(OUT, 'requirements.txt'))
+    example = os.path.join(OUT, 'local_config.example.py')
+    with open(example, 'r', encoding='utf-8') as f:
+        text = f.read()
+    with open(example, 'w', encoding='utf-8') as f:
+        f.write(replace_cleanup_storage(text))
     _trim_frontend()
     for rel in ('extension/options/options.js', 'extension/content/collect.js'):
         p = os.path.join(OUT, rel)
@@ -104,8 +114,8 @@ def build():
             with open(p, 'w', encoding='utf-8') as f:
                 f.write(replace_default_mode(text))
     frontend = os.path.join(OUT, 'frontend')
-    subprocess.run(['npm', 'install'], cwd=frontend, check=True)
-    subprocess.run(['npm', 'run', 'build'], cwd=frontend, check=True)
+    subprocess.run([NPM, 'install'], cwd=frontend, check=True)
+    subprocess.run([NPM, 'run', 'build'], cwd=frontend, check=True)
     subprocess.run(['git', 'init'], cwd=OUT, check=True)
     print(f'开源包已生成：{OUT}')
     print('请 review 后自行推送到开源仓库（脚本不自动 push）。')

@@ -55,10 +55,11 @@ VIDEO_IDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video
 CLEANUP_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cleanup_config.json')
 
 try:
-    from local_config import EXTENSION_API_TOKEN, ALLOWED_AUTHOR_IDS
+    from local_config import EXTENSION_API_TOKEN, ALLOWED_AUTHOR_IDS, CLEANUP_STORAGE
 except Exception:
     EXTENSION_API_TOKEN = ''
     ALLOWED_AUTHOR_IDS = []
+    CLEANUP_STORAGE = 'redis'
 
 ALLOWED_ORIGINS = [
     'http://127.0.0.1:8001',
@@ -68,7 +69,7 @@ ALLOWED_ORIGINS = [
 
 def _cleanup_once() -> None:
     """执行一次清理检查：满足条件则按作者规则备份并删除。"""
-    cfg = cleanup_service.read_cleanup_config(CLEANUP_CONFIG_PATH)
+    cfg = _read_cleanup_config()
     enabled = bool(cfg['enabled'])
     last_raw = cfg['last_clean_time']
     last = None
@@ -134,7 +135,7 @@ def _cleanup_once() -> None:
         db_close(db)
 
     cfg['last_clean_time'] = datetime.now().isoformat(timespec='seconds')
-    cleanup_service.write_cleanup_config(CLEANUP_CONFIG_PATH, cfg)
+    _write_cleanup_config(cfg)
     print(f'定时清理完成：删除 {len(ids)} 条，备份 {backup_path}')
 
 
@@ -215,6 +216,37 @@ def apply_publish_filter(start_date: str, end_date: str):
 def _check_export_total(total: int) -> None:
     if total > export_service.EXPORT_MAX_ROWS:
         raise HTTPException(status_code=400, detail=f'数据量过大（{total} 条），请缩小筛选范围后导出')
+
+
+def _read_cleanup_config() -> dict:
+    """读取清理配置：本地版默认 Redis，开源版（CLEANUP_STORAGE=json）用 JSON 文件。"""
+    if CLEANUP_STORAGE == 'json':
+        return cleanup_service.read_cleanup_config(CLEANUP_CONFIG_PATH)
+    r = get_redis()
+    enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
+    last_clean_time = r.get('douyin:cleanup_last_time')
+    batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
+    authors_raw = r.get('douyin:cleanup_authors')
+    authors = json.loads(authors_raw) if authors_raw else []
+    return {
+        'enabled': enabled,
+        'last_clean_time': last_clean_time,
+        'batch_size': batch_size,
+        'authors': authors,
+    }
+
+
+def _write_cleanup_config(cfg: dict) -> None:
+    """写清理配置：与 _read_cleanup_config 对应的双存储。"""
+    if CLEANUP_STORAGE == 'json':
+        cleanup_service.write_cleanup_config(CLEANUP_CONFIG_PATH, cfg)
+        return
+    r = get_redis()
+    r.set('douyin:cleanup_enabled', '1' if cfg.get('enabled') else '0')
+    if cfg.get('last_clean_time'):
+        r.set('douyin:cleanup_last_time', cfg['last_clean_time'])
+    r.set('douyin:cleanup_batch_size', str(cfg.get('batch_size', cleanup_service.CLEANUP_BATCH_SIZE)))
+    r.set('douyin:cleanup_authors', json.dumps(list(cfg.get('authors', []))))
 
 
 def db_close(db):
@@ -1033,7 +1065,7 @@ class CleanupToggleRequest(BaseModel):
 @app.get('/api/cleanup/status')
 def cleanup_status():
     """返回定时清理开关、上次执行时间、条数与指定作者。"""
-    cfg = cleanup_service.read_cleanup_config(CLEANUP_CONFIG_PATH)
+    cfg = _read_cleanup_config()
     return {
         'enabled': bool(cfg['enabled']),
         'last_clean_time': cfg['last_clean_time'],
@@ -1045,9 +1077,9 @@ def cleanup_status():
 @app.post('/api/cleanup/toggle', dependencies=[Depends(verify_write_guard)])
 def cleanup_toggle(req: CleanupToggleRequest):
     """切换定时清理开关（写接口，走令牌守卫）。"""
-    cfg = cleanup_service.read_cleanup_config(CLEANUP_CONFIG_PATH)
+    cfg = _read_cleanup_config()
     cfg['enabled'] = req.enabled
-    cleanup_service.write_cleanup_config(CLEANUP_CONFIG_PATH, cfg)
+    _write_cleanup_config(cfg)
     return {'enabled': req.enabled}
 
 
@@ -1061,10 +1093,10 @@ def cleanup_settings(req: CleanupSettingsRequest):
     """保存清理条数与指定作者（空 authors = 全部作者）。"""
     if not (1 <= req.batch_size <= 1000):
         raise HTTPException(status_code=400, detail='batch_size 必须在 1-1000 之间')
-    cfg = cleanup_service.read_cleanup_config(CLEANUP_CONFIG_PATH)
+    cfg = _read_cleanup_config()
     cfg['batch_size'] = req.batch_size
     cfg['authors'] = list(req.authors)
-    cleanup_service.write_cleanup_config(CLEANUP_CONFIG_PATH, cfg)
+    _write_cleanup_config(cfg)
     return {'batch_size': req.batch_size, 'authors': req.authors}
 
 
