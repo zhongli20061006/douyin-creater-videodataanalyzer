@@ -19,13 +19,13 @@ ISSUE_LABELS = {
 
 EXPORT_COLUMNS = [
     'video_id', 'video_title', 'video_desc', 'author_name', 'author_id',
-    'publish_time', 'like_count', 'comment_count', 'share_count', 'play_count',
+    'publish_time', 'like_count', 'comment_count', 'share_count', 'collect_count', 'play_count',
     'video_url', 'cover_url', 'crawl_time', 'update_time',
 ]
 
 ISSUE_FIELDS = [
     'video_id', 'video_title', 'author_name', 'author_id',
-    'like_count', 'comment_count', 'share_count', 'play_count',
+    'like_count', 'comment_count', 'share_count', 'collect_count', 'play_count',
     'publish_time', 'crawl_time', 'update_time',
 ]
 

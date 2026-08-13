@@ -2,6 +2,8 @@
 from datetime import datetime, timedelta
 
 from quality import (
+    EXPORT_COLUMNS,
+    ISSUE_FIELDS,
     STALE_DAYS,
     build_csv,
     build_xlsx,
@@ -125,3 +127,10 @@ def test_build_xlsx_returns_valid_workbook():
     assert ws.cell(1, 1).value == 'video_id'
     assert ws.cell(2, 1).value == '1'
     assert ws.cell(2, 2).value == '标题,带逗号"引号"'
+
+
+def test_export_and_issue_fields_include_collect_count():
+    assert 'collect_count' in EXPORT_COLUMNS
+    assert 'collect_count' in ISSUE_FIELDS
+    header = build_csv([make_row(collect_count=66)]).splitlines()[0]
+    assert 'collect_count' in header
