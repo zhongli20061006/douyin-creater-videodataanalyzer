@@ -5,8 +5,10 @@ from cleanup_service import (
     CLEANUP_BATCH_SIZE,
     CLEANUP_INTERVAL_DAYS,
     build_backup_csv,
+    read_cleanup_config,
     select_stale_ids_per_author,
     should_run_cleanup,
+    write_cleanup_config,
 )
 
 
@@ -42,6 +44,26 @@ def test_build_backup_csv_header_and_rows():
     assert 'video_id' in text
     assert 'collect_count' in text
     assert '1' in text
+
+
+def test_cleanup_config_read_missing_returns_default(tmp_path):
+    cfg = read_cleanup_config(str(tmp_path / 'missing.json'))
+    assert cfg['enabled'] is False
+    assert cfg['batch_size'] == 200
+    assert cfg['authors'] == []
+
+
+def test_cleanup_config_write_and_read_roundtrip(tmp_path):
+    path = str(tmp_path / 'cleanup_config.json')
+    write_cleanup_config(path, {'enabled': True, 'last_clean_time': '2026-08-13', 'batch_size': 300, 'authors': ['A']})
+    cfg = read_cleanup_config(path)
+    assert cfg == {'enabled': True, 'last_clean_time': '2026-08-13', 'batch_size': 300, 'authors': ['A']}
+
+
+def test_cleanup_config_atomic_write_no_tmp_leftover(tmp_path):
+    path = str(tmp_path / 'cleanup_config.json')
+    write_cleanup_config(path, {'enabled': True})
+    assert [p for p in tmp_path.iterdir() if p.name.endswith('.tmp')] == []
 
 
 def test_select_stale_ids_per_author_all_authors():
