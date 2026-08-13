@@ -37,6 +37,11 @@ def replace_cleanup_storage(text: str) -> str:
     return text.replace("CLEANUP_STORAGE = 'redis'", "CLEANUP_STORAGE = 'json'")
 
 
+def fix_gitignore(text: str) -> str:
+    """开源包需提交 frontend/dist（构建产物），只忽略 node_modules。"""
+    return text.replace('frontend/dist/\n', '')
+
+
 def _copy(path):
     src = os.path.join(ROOT, path)
     dst = os.path.join(OUT, path)
@@ -106,6 +111,11 @@ def build():
         text = f.read()
     with open(example, 'w', encoding='utf-8') as f:
         f.write(replace_cleanup_storage(text))
+    gitignore = os.path.join(OUT, '.gitignore')
+    with open(gitignore, 'r', encoding='utf-8') as f:
+        text = f.read()
+    with open(gitignore, 'w', encoding='utf-8') as f:
+        f.write(fix_gitignore(text))
     _trim_frontend()
     for rel in ('extension/options/options.js', 'extension/content/collect.js'):
         p = os.path.join(OUT, rel)
