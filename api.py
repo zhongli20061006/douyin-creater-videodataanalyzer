@@ -60,6 +60,88 @@ ALLOWED_ORIGINS = [
     'http://localhost:5173',
 ]
 
+def _cleanup_once() -> None:
+    """执行一次清理检查：满足条件则按作者规则备份并删除。"""
+    r = get_redis()
+    enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
+    last_raw = r.get('douyin:cleanup_last_time')
+    last = None
+    if last_raw:
+        try:
+            last = datetime.fromisoformat(last_raw)
+        except ValueError:
+            last = None
+    if not cleanup_service.should_run_cleanup(enabled, last, datetime.now()):
+        return
+    batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
+    authors_raw = r.get('douyin:cleanup_authors')
+    authors = json.loads(authors_raw) if authors_raw else []
+
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            # 只取分组与排序所需三列，避免全表全字段进内存
+            cursor.execute('SELECT video_id, author_id, update_time FROM video_info')
+            light_rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    if not light_rows:
+        return
+
+    ids = cleanup_service.select_stale_ids_per_author(
+        light_rows, batch_size=batch_size, author_ids=authors or None,
+    )
+    if not ids:
+        print('定时清理跳过：没有满足条件的待删数据')
+        return
+
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            placeholders = ', '.join(['%s'] * len(ids))
+            cursor.execute(
+                f'SELECT * FROM video_info WHERE video_id IN ({placeholders})',
+                tuple(ids),
+            )
+            delete_rows = cursor.fetchall()
+    finally:
+        db_close(db)
+
+    backup_dir = cleanup_service.CLEANUP_BACKUP_DIR
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(
+        backup_dir,
+        'cleanup_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '.csv',
+    )
+    with open(backup_path, 'w', encoding='utf-8', newline='') as f:
+        f.write(cleanup_service.build_backup_csv(delete_rows))
+
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            placeholders = ', '.join(['%s'] * len(ids))
+            cursor.execute(
+                f'DELETE FROM video_info WHERE video_id IN ({placeholders})',
+                tuple(ids),
+            )
+            db.commit()
+    finally:
+        db_close(db)
+
+    r.set('douyin:cleanup_last_time', datetime.now().isoformat(timespec='seconds'))
+    print(f'定时清理完成：删除 {len(ids)} 条，备份 {backup_path}')
+
+
+def _cleanup_loop() -> None:
+    """后台循环：每 24 小时检查一次清理条件。"""
+    while True:
+        try:
+            _cleanup_once()
+        except Exception as e:  # noqa: BLE001 - 后台线程兜底，避免循环退出
+            print(f'定时清理异常：{e}')
+        time_module.sleep(24 * 3600)
+
+
 @asynccontextmanager
 async def lifespan(_app):
     """应用启动时注册定时清理后台线程（daemon，进程退出自动结束）。"""
@@ -888,77 +970,6 @@ def cleanup_settings(req: CleanupSettingsRequest):
     except redis.ConnectionError:
         raise HTTPException(status_code=503, detail='Redis 服务不可用')
     return {'batch_size': req.batch_size, 'authors': req.authors}
-
-
-def _cleanup_once() -> None:
-    """执行一次清理检查：满足条件则按作者规则备份并删除。"""
-    r = get_redis()
-    enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
-    last_raw = r.get('douyin:cleanup_last_time')
-    last = None
-    if last_raw:
-        try:
-            last = datetime.fromisoformat(last_raw)
-        except ValueError:
-            last = None
-    if not cleanup_service.should_run_cleanup(enabled, last, datetime.now()):
-        return
-    batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
-    authors_raw = r.get('douyin:cleanup_authors')
-    authors = json.loads(authors_raw) if authors_raw else []
-
-    db = get_db()
-    try:
-        with db.cursor() as cursor:
-            cursor.execute('SELECT * FROM video_info')
-            rows = cursor.fetchall()
-    finally:
-        db_close(db)
-    if not rows:
-        return
-
-    ids = cleanup_service.select_stale_ids_per_author(
-        rows, batch_size=batch_size, author_ids=authors or None,
-    )
-    if not ids:
-        print('定时清理跳过：没有满足条件的待删数据')
-        return
-
-    by_id = {str(r['video_id']): r for r in rows}
-    delete_rows = [by_id[i] for i in ids if i in by_id]
-    backup_dir = cleanup_service.CLEANUP_BACKUP_DIR
-    os.makedirs(backup_dir, exist_ok=True)
-    backup_path = os.path.join(
-        backup_dir,
-        'cleanup_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '.csv',
-    )
-    with open(backup_path, 'w', encoding='utf-8', newline='') as f:
-        f.write(cleanup_service.build_backup_csv(delete_rows))
-
-    db = get_db()
-    try:
-        with db.cursor() as cursor:
-            placeholders = ', '.join(['%s'] * len(ids))
-            cursor.execute(
-                f'DELETE FROM video_info WHERE video_id IN ({placeholders})',
-                tuple(ids),
-            )
-            db.commit()
-    finally:
-        db_close(db)
-
-    r.set('douyin:cleanup_last_time', datetime.now().isoformat(timespec='seconds'))
-    print(f'定时清理完成：删除 {len(ids)} 条，备份 {backup_path}')
-
-
-def _cleanup_loop() -> None:
-    """后台循环：每 24 小时检查一次清理条件。"""
-    while True:
-        try:
-            _cleanup_once()
-        except Exception as e:  # noqa: BLE001 - 后台线程兜底，避免循环退出
-            print(f'定时清理异常：{e}')
-        time_module.sleep(24 * 3600)
 
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
