@@ -48,6 +48,7 @@ except Exception:
     REDIS_PARAMS = {}
 REDIS_START_URLS_KEY = 'douyin:start_urls'
 VIDEO_IDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video_ids.txt')
+CLEANUP_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cleanup_config.json')
 
 try:
     from local_config import EXTENSION_API_TOKEN
@@ -62,9 +63,9 @@ ALLOWED_ORIGINS = [
 
 def _cleanup_once() -> None:
     """执行一次清理检查：满足条件则按作者规则备份并删除。"""
-    r = get_redis()
-    enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
-    last_raw = r.get('douyin:cleanup_last_time')
+    cfg = cleanup_service.read_cleanup_config(CLEANUP_CONFIG_PATH)
+    enabled = bool(cfg['enabled'])
+    last_raw = cfg['last_clean_time']
     last = None
     if last_raw:
         try:
@@ -73,9 +74,8 @@ def _cleanup_once() -> None:
             last = None
     if not cleanup_service.should_run_cleanup(enabled, last, datetime.now()):
         return
-    batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
-    authors_raw = r.get('douyin:cleanup_authors')
-    authors = json.loads(authors_raw) if authors_raw else []
+    batch_size = int(cfg['batch_size'])
+    authors = list(cfg['authors'])
 
     db = get_db()
     try:
@@ -128,7 +128,8 @@ def _cleanup_once() -> None:
     finally:
         db_close(db)
 
-    r.set('douyin:cleanup_last_time', datetime.now().isoformat(timespec='seconds'))
+    cfg['last_clean_time'] = datetime.now().isoformat(timespec='seconds')
+    cleanup_service.write_cleanup_config(CLEANUP_CONFIG_PATH, cfg)
     print(f'定时清理完成：删除 {len(ids)} 条，备份 {backup_path}')
 
 
@@ -925,31 +926,21 @@ class CleanupToggleRequest(BaseModel):
 @app.get('/api/cleanup/status')
 def cleanup_status():
     """返回定时清理开关、上次执行时间、条数与指定作者。"""
-    try:
-        r = get_redis()
-        enabled = int(r.get('douyin:cleanup_enabled') or 0) == 1
-        last_clean_time = r.get('douyin:cleanup_last_time')
-        batch_size = int(r.get('douyin:cleanup_batch_size') or cleanup_service.CLEANUP_BATCH_SIZE)
-        authors_raw = r.get('douyin:cleanup_authors')
-        authors = json.loads(authors_raw) if authors_raw else []
-    except redis.ConnectionError:
-        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    cfg = cleanup_service.read_cleanup_config(CLEANUP_CONFIG_PATH)
     return {
-        'enabled': enabled,
-        'last_clean_time': last_clean_time,
-        'batch_size': batch_size,
-        'authors': authors,
+        'enabled': bool(cfg['enabled']),
+        'last_clean_time': cfg['last_clean_time'],
+        'batch_size': int(cfg['batch_size']),
+        'authors': list(cfg['authors']),
     }
 
 
 @app.post('/api/cleanup/toggle', dependencies=[Depends(verify_write_guard)])
 def cleanup_toggle(req: CleanupToggleRequest):
     """切换定时清理开关（写接口，走令牌守卫）。"""
-    try:
-        r = get_redis()
-        r.set('douyin:cleanup_enabled', '1' if req.enabled else '0')
-    except redis.ConnectionError:
-        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    cfg = cleanup_service.read_cleanup_config(CLEANUP_CONFIG_PATH)
+    cfg['enabled'] = req.enabled
+    cleanup_service.write_cleanup_config(CLEANUP_CONFIG_PATH, cfg)
     return {'enabled': req.enabled}
 
 
@@ -963,12 +954,10 @@ def cleanup_settings(req: CleanupSettingsRequest):
     """保存清理条数与指定作者（空 authors = 全部作者）。"""
     if not (1 <= req.batch_size <= 1000):
         raise HTTPException(status_code=400, detail='batch_size 必须在 1-1000 之间')
-    try:
-        r = get_redis()
-        r.set('douyin:cleanup_batch_size', str(req.batch_size))
-        r.set('douyin:cleanup_authors', json.dumps(req.authors))
-    except redis.ConnectionError:
-        raise HTTPException(status_code=503, detail='Redis 服务不可用')
+    cfg = cleanup_service.read_cleanup_config(CLEANUP_CONFIG_PATH)
+    cfg['batch_size'] = req.batch_size
+    cfg['authors'] = list(req.authors)
+    cleanup_service.write_cleanup_config(CLEANUP_CONFIG_PATH, cfg)
     return {'batch_size': req.batch_size, 'authors': req.authors}
 
 
