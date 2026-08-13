@@ -27,12 +27,6 @@ def should_run_cleanup(enabled, last_clean_time: Optional[datetime], now: dateti
     return (now - last_clean_time) >= timedelta(days=interval_days)
 
 
-def select_stale_ids(rows: list[dict], batch_size: int = CLEANUP_BATCH_SIZE) -> list[str]:
-    """按 update_time 升序取前 batch_size 个 video_id；update_time 缺失排最前。"""
-    ordered = sorted(rows, key=lambda r: r.get('update_time') or datetime.min)
-    return [str(r['video_id']) for r in ordered[:batch_size]]
-
-
 def select_stale_ids_per_author(rows: list[dict], batch_size: int = CLEANUP_BATCH_SIZE,
                                 author_ids: Optional[list] = None) -> list[str]:
     """按作者分组选择待删 video_id。

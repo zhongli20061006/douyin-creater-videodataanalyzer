@@ -5,7 +5,6 @@ from cleanup_service import (
     CLEANUP_BATCH_SIZE,
     CLEANUP_INTERVAL_DAYS,
     build_backup_csv,
-    select_stale_ids,
     select_stale_ids_per_author,
     should_run_cleanup,
 )
@@ -32,28 +31,6 @@ def test_should_run_cleanup_not_due():
 def test_should_run_cleanup_due():
     now = datetime(2026, 8, 12)
     assert should_run_cleanup(True, now - timedelta(days=30), now) is True
-
-
-def test_select_stale_ids_asc_order():
-    rows = [
-        {'video_id': 'c', 'update_time': datetime(2026, 8, 12)},
-        {'video_id': 'a', 'update_time': datetime(2026, 8, 1)},
-        {'video_id': 'b', 'update_time': datetime(2026, 8, 10)},
-    ]
-    assert select_stale_ids(rows, batch_size=2) == ['a', 'b']
-
-
-def test_select_stale_ids_less_than_batch():
-    rows = [{'video_id': 'x', 'update_time': None}]
-    assert select_stale_ids(rows, batch_size=5) == ['x']
-
-
-def test_select_stale_ids_missing_time_sorted_first():
-    rows = [
-        {'video_id': 'n', 'update_time': None},
-        {'video_id': 'y', 'update_time': datetime(2026, 8, 12)},
-    ]
-    assert select_stale_ids(rows, batch_size=1) == ['n']
 
 
 def test_build_backup_csv_header_and_rows():
