@@ -17,7 +17,11 @@ KEEP_FILES = [
     'local_config.example.py', 'LICENSE', '.gitignore',
     'frontend/package.json', 'frontend/package-lock.json', 'frontend/vite.config.ts',
     'frontend/tsconfig.json', 'frontend/index.html', 'frontend/src/',
-    'extension/', 'tests/', 'requirements.txt',
+    'extension/', 'requirements.txt',
+    'tests/test_analyzer.py', 'tests/test_extension_receiver.py',
+    'tests/test_cleanup_service.py', 'tests/test_export_service.py',
+    'tests/test_time_filter.py', 'tests/test_release_script.py',
+    'tests/test_api_guard.py',
 ]
 
 EXCLUDE_FILES = [
