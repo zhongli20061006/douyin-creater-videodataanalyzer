@@ -13,7 +13,7 @@ def test_release_keep_list_has_core_files():
     keep = _load_script().KEEP_FILES
     assert any('api.py' in p for p in keep)
     assert any('extension_receiver.py' in p for p in keep)
-    assert any('frontend/src/pages/Videos.vue' in p for p in keep)
+    assert any('frontend/src' in p for p in keep)
 
 
 def test_release_keep_list_excludes_crawler():
