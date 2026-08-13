@@ -465,3 +465,12 @@ def filter_by_author_whitelist(records: list[dict], allowed_author_ids: list) ->
         else:
             rejected.append({'video_id': r.get('video_id', ''), 'reason': '作者不在允许列表内'})
     return kept, rejected
+
+
+def build_author_filter(author_ids: list) -> tuple[str, list]:
+    """构建作者可见性过滤：空列表返回 ('', [])；非空返回 (author_id IN (%s,...), ids)。"""
+    if not author_ids:
+        return '', []
+    ids = [str(a) for a in author_ids]
+    placeholders = ', '.join(['%s'] * len(ids))
+    return f'author_id IN ({placeholders})', ids

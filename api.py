@@ -27,30 +27,39 @@ import cleanup_service
 import export_service
 from time_filter import build_publish_filter
 
-os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'douyin_spider.settings')
-
-try:
-    from scrapy.utils.project import get_project_settings
-    settings = get_project_settings()
-    MYSQL_HOST = settings.get('MYSQL_HOST', 'localhost')
-    MYSQL_PORT = settings.getint('MYSQL_PORT', 3307)
-    MYSQL_USER = settings.get('MYSQL_USER', 'root')
-    MYSQL_PASSWORD = settings.get('MYSQL_PASSWORD', '')
-    MYSQL_DB = settings.get('MYSQL_DB', 'douyin_spider')
-    REDIS_HOST = settings.get('REDIS_HOST', 'localhost')
-    REDIS_PORT = settings.getint('REDIS_PORT', 6379)
-    REDIS_PARAMS = settings.getdict('REDIS_PARAMS', {})
-    REDIS_START_URLS_KEY = settings.get('REDIS_START_URLS_KEY', 'douyin:start_urls')
-except Exception:
-    MYSQL_HOST = 'localhost'
-    MYSQL_PORT = 3307
-    MYSQL_USER = 'root'
-    MYSQL_PASSWORD = ''
-    MYSQL_DB = 'douyin_spider'
-    REDIS_HOST = 'localhost'
-    REDIS_PORT = 6379
-    REDIS_PARAMS = {}
+MYSQL_HOST = 'localhost'
+MYSQL_PORT = 3307
+MYSQL_USER = 'root'
+MYSQL_PASSWORD = ''
+MYSQL_DB = 'douyin_spider'
+REDIS_HOST = 'localhost'
+REDIS_PORT = 6379
+REDIS_PARAMS = {}
 REDIS_START_URLS_KEY = 'douyin:start_urls'
+
+# 优先从 local_config 读 MySQL 配置（开源版无 Scrapy）；缺失时回退 Scrapy settings。
+try:
+    from local_config import (
+        MYSQL_HOST as _H, MYSQL_PORT as _P, MYSQL_USER as _U,
+        MYSQL_PASSWORD as _PW, MYSQL_DB as _DB,
+    )
+    MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DB = _H, _P, _U, _PW, _DB
+except ImportError:
+    try:
+        from scrapy.utils.project import get_project_settings
+        _s = get_project_settings()
+        MYSQL_HOST = _s.get('MYSQL_HOST', MYSQL_HOST)
+        MYSQL_PORT = _s.getint('MYSQL_PORT', MYSQL_PORT)
+        MYSQL_USER = _s.get('MYSQL_USER', MYSQL_USER)
+        MYSQL_PASSWORD = _s.get('MYSQL_PASSWORD', MYSQL_PASSWORD)
+        MYSQL_DB = _s.get('MYSQL_DB', MYSQL_DB)
+        REDIS_HOST = _s.get('REDIS_HOST', REDIS_HOST)
+        REDIS_PORT = _s.getint('REDIS_PORT', REDIS_PORT)
+        REDIS_PARAMS = _s.getdict('REDIS_PARAMS', {})
+        REDIS_START_URLS_KEY = _s.get('REDIS_START_URLS_KEY', REDIS_START_URLS_KEY)
+    except Exception:
+        pass
+
 VIDEO_IDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'video_ids.txt')
 CLEANUP_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cleanup_config.json')
 
@@ -404,6 +413,7 @@ def list_videos(
     order_clause = 'DESC' if order == 'desc' else 'ASC'
     offset = (page - 1) * page_size
     publish_clause, publish_params = apply_publish_filter(start_date, end_date)
+    author_clause, author_params = extension_receiver.build_author_filter(ALLOWED_AUTHOR_IDS)
 
     db = get_db()
     try:
@@ -415,6 +425,9 @@ def list_videos(
                 if publish_clause:
                     where_parts.append(publish_clause)
                     count_params.extend(publish_params)
+                if author_clause:
+                    where_parts.append(author_clause)
+                    count_params.extend(author_params)
                 where_sql = ' AND '.join(where_parts)
                 count_sql = f'SELECT COUNT(*) AS total FROM video_info WHERE {where_sql}'
                 cursor.execute(count_sql, tuple(count_params))
@@ -433,6 +446,9 @@ def list_videos(
                 if publish_clause:
                     where_parts.append(publish_clause)
                     count_params.extend(publish_params)
+                if author_clause:
+                    where_parts.append(author_clause)
+                    count_params.extend(author_params)
                 where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
                 cursor.execute(f'SELECT COUNT(*) AS total FROM video_info {where_sql}', tuple(count_params))
                 total = cursor.fetchone()['total']
@@ -916,13 +932,19 @@ def analyze_authors():
     db = get_db()
     try:
         with db.cursor() as cursor:
-            cursor.execute("""
+            author_clause, author_params = extension_receiver.build_author_filter(ALLOWED_AUTHOR_IDS)
+            where_sql = 'author_id IS NOT NULL AND author_id <> \'\''
+            params = []
+            if author_clause:
+                where_sql += ' AND ' + author_clause
+                params.extend(author_params)
+            cursor.execute(f"""
                 SELECT author_id, author_name, COUNT(*) AS count
                 FROM video_info
-                WHERE author_id IS NOT NULL AND author_id <> ''
+                WHERE {where_sql}
                 GROUP BY author_id, author_name
                 ORDER BY count DESC
-            """)
+            """, tuple(params))
             rows = cursor.fetchall()
     finally:
         db_close(db)
@@ -943,11 +965,15 @@ def analyze_personal(
     try:
         with db.cursor() as cursor:
             publish_clause, publish_params = apply_publish_filter(start_date, end_date)
+            author_clause, author_params = extension_receiver.build_author_filter(ALLOWED_AUTHOR_IDS)
             where_sql = 'author_id = %s'
             where_params = [author_id]
             if publish_clause:
                 where_sql += ' AND ' + publish_clause
                 where_params.extend(publish_params)
+            if author_clause:
+                where_sql += ' AND ' + author_clause
+                where_params.extend(author_params)
             cursor.execute(f'SELECT * FROM video_info WHERE {where_sql}', tuple(where_params))
             rows = cursor.fetchall()
     finally:

@@ -10,6 +10,12 @@ DOUYIN_COOKIES = {
 
 MYSQL_PASSWORD = '你的 MySQL 密码'
 
+# MySQL 连接信息（开源版无 Scrapy，直接从这里读；本地开发版若只填密码，其余走 douyin_spider/settings.py）
+MYSQL_HOST = 'localhost'
+MYSQL_PORT = 3307
+MYSQL_USER = 'root'
+MYSQL_DB = 'douyin_spider'
+
 # 扩展写接口鉴权令牌（extension 选项页需填写同一令牌）
 # 留空 = fail-closed：扩展上报会被后端拒绝（503）
 EXTENSION_API_TOKEN = '请设置一段随机字符串'

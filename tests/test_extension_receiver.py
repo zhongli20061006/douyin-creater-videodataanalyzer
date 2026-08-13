@@ -6,6 +6,7 @@ from extension_receiver import (
     append_ids_file,
     attach_author_names,
     backfill_authors,
+    build_author_filter,
     build_upsert,
     dedupe_records,
     evaluate_write_guard,
@@ -418,6 +419,17 @@ def test_filter_by_author_whitelist_rejects_other_and_empty():
     kept, rejected = filter_by_author_whitelist(records, ['A'])
     assert [r['video_id'] for r in kept] == ['1']
     assert {r['video_id'] for r in rejected} == {'2', '3'}
+
+
+def test_build_author_filter_empty_returns_empty():
+    clause, params = build_author_filter([])
+    assert clause == '' and params == []
+
+
+def test_build_author_filter_builds_in_clause():
+    clause, params = build_author_filter(['A', 'B'])
+    assert clause == 'author_id IN (%s, %s)'
+    assert params == ['A', 'B']
 
 
 def test_normalize_record_accepts_collect_count():
