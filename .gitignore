@@ -57,3 +57,6 @@ extension/node_modules/
 
 # 开源发布产物
 release/
+
+# DeepSeek Harness 桌面端构建产物（本机运行 GUI 用，勿入库）
+dsh-desktop/
