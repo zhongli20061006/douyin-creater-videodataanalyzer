@@ -1,6 +1,9 @@
 """修复 2：启动爬虫前自检 Playwright，不可用时清晰报错退出。"""
+import os
+
 import pytest
 
+from api import SpiderManager
 from start_spider import check_playwright_browser, ensure_playwright_ok
 
 
@@ -52,3 +55,13 @@ def test_ensure_playwright_ok_exits_with_clear_message_on_failure(capsys):
 
 def test_ensure_playwright_ok_passes_when_available():
     ensure_playwright_ok(check_func=lambda: (True, ''))
+
+
+def test_spider_manager_venv_python_matches_platform():
+    """SpiderManager 的子进程解释器路径必须随平台变化（Windows Scripts/，Linux bin/）。"""
+    mgr = SpiderManager()
+    if os.name == 'nt':
+        assert mgr.venv_python.endswith(os.path.join('.venv', 'Scripts', 'python.exe'))
+    else:
+        assert mgr.venv_python.endswith(os.path.join('.venv', 'bin', 'python'))
+    assert os.path.exists(mgr.venv_python), f'{mgr.venv_python} 应存在'

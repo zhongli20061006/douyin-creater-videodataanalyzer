@@ -288,7 +288,10 @@ class SpiderManager:
         self.process: Optional[subprocess.Popen] = None
         self.started_at: Optional[datetime] = None
         self.project_root = os.path.dirname(os.path.abspath(__file__))
-        self.venv_python = os.path.join(self.project_root, '.venv', 'Scripts', 'python.exe')
+        if os.name == 'nt':
+            self.venv_python = os.path.join(self.project_root, '.venv', 'Scripts', 'python.exe')
+        else:
+            self.venv_python = os.path.join(self.project_root, '.venv', 'bin', 'python')
         self.log_path = os.path.join(self.project_root, 'spider_output.log')
 
     def start(self):
