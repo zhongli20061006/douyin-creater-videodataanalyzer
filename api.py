@@ -188,6 +188,21 @@ def verify_write_guard(
         raise HTTPException(status_code=status_code, detail=reason)
 
 
+def verify_read_guard(
+    origin: Optional[str] = Header(default=None),
+    x_api_token: Optional[str] = Header(default=None, alias='X-API-Token'),
+) -> None:
+    """只读接口守卫：与写守卫同语义（Origin 白名单或 X-API-Token；未配置令牌时 fail-closed）。
+
+    公网下 GET 接口也强制令牌，避免数据裸奔；本机 Origin 白名单仍放行。
+    """
+    allowed, status_code, reason = extension_receiver.evaluate_write_guard(
+        origin, x_api_token, EXTENSION_API_TOKEN, ALLOWED_ORIGINS,
+    )
+    if not allowed:
+        raise HTTPException(status_code=status_code, detail=reason)
+
+
 def get_redis():
     return redis.Redis(
         host=REDIS_HOST,
@@ -392,7 +407,7 @@ class StatsResponse(BaseModel):
 
 # ── API Endpoints ──
 
-@app.get('/api/videos', response_model=PaginatedResponse)
+@app.get('/api/videos', response_model=PaginatedResponse, dependencies=[Depends(verify_read_guard)])
 def list_videos(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -474,7 +489,7 @@ def list_videos(
         db_close(db)
 
 
-@app.get('/api/videos/{video_id}', response_model=VideoItem)
+@app.get('/api/videos/{video_id}', response_model=VideoItem, dependencies=[Depends(verify_read_guard)])
 def get_video(video_id: str):
     db = get_db()
     try:
@@ -488,7 +503,7 @@ def get_video(video_id: str):
         db_close(db)
 
 
-@app.get('/api/stats', response_model=StatsResponse)
+@app.get('/api/stats', response_model=StatsResponse, dependencies=[Depends(verify_read_guard)])
 def get_stats(
     start_date: str = Query('', description='发布时间起始（YYYY-MM-DD）'),
     end_date: str = Query('', description='发布时间结束（YYYY-MM-DD）'),
@@ -532,7 +547,7 @@ def get_stats(
     )
 
 
-@app.get('/api/stats/authors')
+@app.get('/api/stats/authors', dependencies=[Depends(verify_read_guard)])
 def stats_authors():
     db = get_db()
     try:
@@ -592,7 +607,7 @@ def delete_video(video_id: str):
         db_close(db)
 
 
-@app.get('/api/queue/length')
+@app.get('/api/queue/length', dependencies=[Depends(verify_read_guard)])
 def get_queue_length():
     try:
         r = get_redis()
@@ -601,7 +616,7 @@ def get_queue_length():
         raise HTTPException(status_code=503, detail='Redis 服务不可用')
 
 
-@app.get('/api/queue/items')
+@app.get('/api/queue/items', dependencies=[Depends(verify_read_guard)])
 def get_queue_items(limit: int = Query(50, ge=1, le=200)):
     try:
         r = get_redis()
@@ -669,12 +684,12 @@ def spider_stop():
     return {'message': msg, 'running': False}
 
 
-@app.get('/api/spider/status')
+@app.get('/api/spider/status', dependencies=[Depends(verify_read_guard)])
 def spider_status():
     return spider_manager.get_status()
 
 
-@app.get('/api/spider/log')
+@app.get('/api/spider/log', dependencies=[Depends(verify_read_guard)])
 def spider_log(lines: int = 50):
     return {'lines': spider_manager.get_log(lines)}
 
@@ -712,7 +727,7 @@ def collect_author(req: CollectRequest):
     return result
 
 
-@app.get('/api/quality/report')
+@app.get('/api/quality/report', dependencies=[Depends(verify_read_guard)])
 def quality_report():
     db = get_db()
     try:
@@ -770,7 +785,7 @@ def quality_delete(req: QualityDeleteRequest):
     return {'deleted': deleted, 'rejected': rejected}
 
 
-@app.get('/api/quality/export')
+@app.get('/api/quality/export', dependencies=[Depends(verify_read_guard)])
 def quality_export(
     scope: str = Query('all', pattern='^(all|issues)$'),
     format: str = Query('csv', pattern='^(csv|xlsx)$'),
@@ -857,7 +872,7 @@ def extension_save_ids(req: ExtensionIdsRequest):
     return {'added': added, 'total': total, 'rejected': rejected}
 
 
-@app.get('/api/extension/ids')
+@app.get('/api/extension/ids', dependencies=[Depends(verify_read_guard)])
 def extension_list_ids():
     """返回 video_ids.txt 的数量、纯 id 列表与带状态/作者/昵称明细，供前端查看/导入爬虫队列。"""
     records = extension_receiver.read_ids_with_status(VIDEO_IDS_PATH)
@@ -926,7 +941,7 @@ def extension_set_ids_status(req: ExtensionIdsStatusRequest):
     return {'updated': updated, 'rejected': rejected}
 
 
-@app.get('/api/analyze/authors')
+@app.get('/api/analyze/authors', dependencies=[Depends(verify_read_guard)])
 def analyze_authors():
     """作者下拉数据源：author_id + author_name + 视频数。"""
     db = get_db()
@@ -951,7 +966,7 @@ def analyze_authors():
     return {'authors': rows}
 
 
-@app.get('/api/analyze/personal')
+@app.get('/api/analyze/personal', dependencies=[Depends(verify_read_guard)])
 def analyze_personal(
     author_id: str = Query(..., description='作者 uid'),
     sort_by: str = Query('likes', description='Top 视频排序维度'),
@@ -989,7 +1004,7 @@ def analyze_personal(
     }
 
 
-@app.get('/api/export')
+@app.get('/api/export', dependencies=[Depends(verify_read_guard)])
 def export_data(
     search: str = Query('', description='搜索视频标题/作者/ID'),
     sort_by: str = Query('crawl_time', description='排序字段'),
@@ -1088,7 +1103,7 @@ class CleanupToggleRequest(BaseModel):
     enabled: bool
 
 
-@app.get('/api/cleanup/status')
+@app.get('/api/cleanup/status', dependencies=[Depends(verify_read_guard)])
 def cleanup_status():
     """返回定时清理开关、上次执行时间、条数与指定作者。"""
     cfg = _read_cleanup_config()
