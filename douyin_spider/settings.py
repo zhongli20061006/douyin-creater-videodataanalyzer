@@ -33,6 +33,12 @@ try:
 except ImportError:
     DOUYIN_COOKIES = {}
     MYSQL_PASSWORD = ''
+# local_config 中可选的 MySQL 连接信息（云上 3306/douyin_app，本地 3307/root）：
+# 未定义时保持默认值；只覆盖一部分不影响其余项。
+try:
+    import local_config as _local_config
+except ImportError:
+    _local_config = None
 # 关闭 Telnet 控制台
 TELNETCONSOLE_ENABLED = False
 
@@ -65,11 +71,11 @@ ITEM_PIPELINES = {
     'douyin_spider.pipelines.MySQLPipeline': 300,
 }
 
-# MySQL 数据库配置（密码来自上方 local_config 导入）
-MYSQL_HOST = 'localhost'
-MYSQL_PORT = 3307
-MYSQL_USER = 'root'
-MYSQL_DB = 'douyin_spider'
+# MySQL 数据库配置（密码来自上方 local_config 导入；host/port/user/db 可被 local_config 覆盖，缺失时用默认值）
+MYSQL_HOST = getattr(_local_config, 'MYSQL_HOST', 'localhost')
+MYSQL_PORT = getattr(_local_config, 'MYSQL_PORT', 3307)
+MYSQL_USER = getattr(_local_config, 'MYSQL_USER', 'root')
+MYSQL_DB = getattr(_local_config, 'MYSQL_DB', 'douyin_spider')
 
 # ========== 分布式爬虫配置（Scrapy-Redis）==========
 # 启用 Redis 调度器
