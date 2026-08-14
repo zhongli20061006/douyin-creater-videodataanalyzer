@@ -72,14 +72,16 @@ class DouyinDownloaderMiddleware:
 
 
 class PlaywrightMiddleware:
-    def __init__(self):
+    def __init__(self, headless=True):
+        self.headless = headless
         self.playwright = None
         self.browser = None
         self._init_failed = False
 
     @classmethod
     def from_crawler(cls, crawler):
-        middleware = cls()
+        headless = crawler.settings.get('PLAYWRIGHT_HEADLESS', True)
+        middleware = cls(headless=headless)
         crawler.signals.connect(middleware.spider_opened, signal=signals.spider_opened)
         crawler.signals.connect(middleware.spider_closed, signal=signals.spider_closed)
         return middleware
@@ -88,7 +90,7 @@ class PlaywrightMiddleware:
         try:
             self.playwright = sync_playwright().start()
             self.browser = self.playwright.chromium.launch(
-                headless=False,
+                headless=self.headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             logger.info("✅ Playwright 浏览器启动成功")

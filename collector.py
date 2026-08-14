@@ -46,8 +46,11 @@ def dedupe_videos(videos):
     return result
 
 
-def fetch_author_videos_browser(sec_user_id, max_count=50):
-    """用 Playwright 打开作者主页并拦截 aweme/post 接口响应。"""
+def fetch_author_videos_browser(sec_user_id, max_count=50, headless=True):
+    """用 Playwright 打开作者主页并拦截 aweme/post 接口响应。
+
+    headless=True 为云上安全默认值；本地开发可传 headless=False 观察浏览器。
+    """
     from playwright.sync_api import sync_playwright
 
     url = f'https://www.douyin.com/user/{sec_user_id}'
@@ -56,7 +59,7 @@ def fetch_author_videos_browser(sec_user_id, max_count=50):
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=True,
+            headless=headless,
             args=['--disable-blink-features=AutomationControlled'],
         )
         try:
