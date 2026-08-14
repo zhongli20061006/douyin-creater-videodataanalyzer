@@ -1,5 +1,6 @@
 # 核心依赖
 Scrapy==2.12.0          # 爬虫框架，支持 Python 3.13
+Twisted==25.5.0         # Scrapy 2.12 依赖；必须 <26（Twisted 26 移除了 scrapy 用的 _setAcceptableProtocols / ConnectionFailed）
 redis==5.0.1            # Redis 客户端
 PyMySQL==1.1.0          # MySQL 数据库驱动
 requests==2.31.0        # HTTP 请求库
