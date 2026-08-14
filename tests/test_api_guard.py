@@ -23,6 +23,10 @@ def test_whitelist_origin_passes_without_token():
     _call_guard('http://127.0.0.1:8001', None)
 
 
+def test_cloud_origin_in_allowed_origins():
+    assert 'http://47.120.36.73' in api.ALLOWED_ORIGINS
+
+
 def test_valid_token_passes_from_other_origin():
     _call_guard('https://www.douyin.com', 'test-token')
 

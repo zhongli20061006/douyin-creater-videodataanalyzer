@@ -74,6 +74,7 @@ ALLOWED_ORIGINS = [
     'http://127.0.0.1:8001',
     'http://localhost:8001',
     'http://localhost:5173',
+    'http://47.120.36.73',
 ]
 
 def _cleanup_once() -> None:

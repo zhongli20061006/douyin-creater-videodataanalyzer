@@ -43,3 +43,14 @@ test('选项页重置清空 API 令牌', async () => {
   await flush()
   assert.equal(store.apiToken, '')
 })
+
+test('选项页默认后端地址为云地址', async () => {
+  const { window } = createPage()
+  await flush()
+  assert.equal(window.document.getElementById('backend').value, 'http://47.120.36.73')
+})
+
+test('manifest host_permissions 包含云地址', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf-8'))
+  assert.ok(manifest.host_permissions.includes('http://47.120.36.73/*'))
+})

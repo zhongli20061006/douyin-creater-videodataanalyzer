@@ -14,7 +14,7 @@
   const KEY_NICKNAME = 'myNickname';
   const KEY_MODE = 'complianceMode';
   const KEY_TOKEN = 'apiToken';
-  const DEFAULT_BACKEND = 'http://127.0.0.1:8001';
+  const DEFAULT_BACKEND = 'http://47.120.36.73';
   const HOOK_EVENT = 'dy-analyzer-data';
 
   let homeButtonAdded = false;
