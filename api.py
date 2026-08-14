@@ -22,6 +22,7 @@ import quality as quality_service
 import collector
 import queue_service
 import extension_receiver
+import cookie_config
 import analyzer
 import cleanup_service
 import export_service
@@ -1143,6 +1144,49 @@ def cleanup_settings(req: CleanupSettingsRequest):
     cfg['authors'] = list(req.authors)
     _write_cleanup_config(cfg)
     return {'batch_size': req.batch_size, 'authors': req.authors}
+
+
+class CookieUpdateRequest(BaseModel):
+    cookie: str
+
+
+@app.get('/api/config/cookie', dependencies=[Depends(verify_read_guard)])
+def cookie_status():
+    """当前服务器 Cookie 配置摘要（脱敏）与预计过期时间。"""
+    cookies = cookie_config.read_cookies_from_config()
+    return {
+        'configured': bool(cookies),
+        'count': len(cookies),
+        'masked': cookie_config.mask_cookie(cookies),
+        'expiry_hint': cookie_config.cookie_expiry_hint(cookies),
+    }
+
+
+@app.post('/api/config/cookie', dependencies=[Depends(verify_write_guard)])
+def cookie_update(req: CookieUpdateRequest):
+    """用浏览器复制的 Cookie 字符串整体替换服务器 DOUYIN_COOKIES（热更新，无需重启）。"""
+    parsed = cookie_config.parse_cookie_string(req.cookie)
+    if 'sessionid' not in parsed or 'ttwid' not in parsed:
+        raise HTTPException(status_code=400, detail='Cookie 缺少 sessionid/ttwid，请从抖音网页版完整复制')
+    cookie_config.write_cookie_config(parsed)
+    _refresh_cookie_bindings()
+    return {
+        'updated': len(parsed),
+        'masked': cookie_config.mask_cookie(parsed),
+        'expiry_hint': cookie_config.cookie_expiry_hint(parsed),
+    }
+
+
+def _refresh_cookie_bindings():
+    """热更新进程内绑定：/api/collect/author 通过 get_project_settings() 读取 settings.DOUYIN_COOKIES；
+    爬虫子进程每次启动都会重新 import local_config，无需处理。"""
+    import importlib
+
+    import local_config
+    import douyin_spider.settings as spider_settings
+
+    importlib.reload(local_config)
+    spider_settings.DOUYIN_COOKIES = local_config.DOUYIN_COOKIES
 
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')

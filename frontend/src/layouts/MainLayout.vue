@@ -12,6 +12,7 @@ const menus = [
   { index: '/collect', label: '爬虫任务导入' },
   { index: '/quality', label: '数据质量' },
   { index: '/personal', label: '个人分析' },
+  { index: '/settings', label: '设置' },
 ]
 
 const apiToken = ref('')
