@@ -20,3 +20,37 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 })
 
 export default api
+
+export interface InsightItem {
+  video_id: string
+  video_title?: string | null
+  publish_time?: string | null
+  days_since_publish: number
+  maturity_bucket: string
+  play_count: number
+  engage_rate: number | null
+  collect_rate: number | null
+  score: number
+  percentiles: { play: number | null; engage: number | null; collect: number | null }
+  explanation: string
+}
+
+export interface InsightData {
+  author_id: string
+  author_name: string
+  sample_size: number
+  insufficient_sample: boolean
+  top: InsightItem[]
+  bottom: InsightItem[]
+  generated_at: string
+}
+
+export function getAnalyzeInsights(params: {
+  author_id: string
+  start_date?: string
+  end_date?: string
+  limit?: number
+}) {
+  return api.get<InsightData>('/analyze/insights', { params })
+}
+

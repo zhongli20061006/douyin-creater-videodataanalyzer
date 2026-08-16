@@ -1009,6 +1009,45 @@ def analyze_personal(
     }
 
 
+@app.get('/api/analyze/insights', dependencies=[Depends(verify_read_guard)])
+def analyze_insights_endpoint(
+    author_id: str = Query('', description='作者 uid'),
+    start_date: str = Query('', description='发布时间起始（YYYY-MM-DD）'),
+    end_date: str = Query('', description='发布时间结束（YYYY-MM-DD）'),
+    limit: int = Query(10, description='Top/Bottom 各返回条数'),
+):
+    """按作者识别潜力爆款与异常偏低视频。"""
+    author_id = (author_id or '').strip()
+    if not author_id:
+        raise HTTPException(status_code=400, detail='author_id 不能为空')
+    if limit < 1 or limit > 50:
+        raise HTTPException(status_code=400, detail='limit 必须是 1-50 之间的整数')
+    db = get_db()
+    try:
+        with db.cursor() as cursor:
+            publish_clause, publish_params = apply_publish_filter(start_date, end_date)
+            author_clause, author_params = extension_receiver.build_author_filter(ALLOWED_AUTHOR_IDS)
+            where_sql = 'author_id = %s'
+            where_params = [author_id]
+            if publish_clause:
+                where_sql += ' AND ' + publish_clause
+                where_params.extend(publish_params)
+            if author_clause:
+                where_sql += ' AND ' + author_clause
+                where_params.extend(author_params)
+            cursor.execute(f'SELECT * FROM video_info WHERE {where_sql}', tuple(where_params))
+            rows = cursor.fetchall()
+    finally:
+        db_close(db)
+    author_name = (rows[0].get('author_name') or '') if rows else ''
+    insights = analyzer.analyze_insights(rows, limit=limit)
+    return {
+        'author_id': author_id,
+        'author_name': author_name,
+        **insights,
+    }
+
+
 @app.get('/api/export', dependencies=[Depends(verify_read_guard)])
 def export_data(
     search: str = Query('', description='搜索视频标题/作者/ID'),

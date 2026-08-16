@@ -7,7 +7,7 @@ import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 
-import api from '../api'
+import api, { getAnalyzeInsights, type InsightData } from '../api'
 import StatCard from '../components/StatCard.vue'
 
 use([BarChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
@@ -59,6 +59,10 @@ const data = ref<PersonalData | null>(null)
 const error = ref('')
 const sortBy = ref('likes')
 const dateRange = ref<[string, string] | null>(null)
+const insights = ref<InsightData | null>(null)
+const insightsLoading = ref(false)
+const insightsError = ref('')
+let insightsRequestSeq = 0
 
 const dateShortcuts = [
   {
@@ -225,7 +229,40 @@ async function loadPersonal() {
   }
 }
 
+async function loadInsights() {
+  if (!authorId.value) {
+    insights.value = null
+    insightsError.value = ''
+    return
+  }
+  const requestId = ++insightsRequestSeq
+  insights.value = null
+  insightsLoading.value = true
+  insightsError.value = ''
+  try {
+    const res = await getAnalyzeInsights({
+      author_id: authorId.value,
+      start_date: dateRange.value ? dateRange.value[0] : undefined,
+      end_date: dateRange.value ? dateRange.value[1] : undefined,
+    })
+    if (requestId !== insightsRequestSeq) return
+    insights.value = res.data
+  } catch (e: any) {
+    if (requestId !== insightsRequestSeq) return
+    insightsError.value = e?.response?.data?.detail || e?.message || '加载爆款洞察失败'
+  } finally {
+    if (requestId === insightsRequestSeq) {
+      insightsLoading.value = false
+    }
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([loadPersonal(), loadInsights()])
+}
+
 watch([authorId, sortBy, dateRange], loadPersonal)
+watch([authorId, dateRange], loadInsights)
 onMounted(loadAuthors)
 
 function fmtNum(n?: number) {
@@ -269,7 +306,7 @@ function fmtRate(v?: number | null) {
         style="max-width: 300px"
         clearable
       />
-      <el-button :loading="loading" @click="loadPersonal">刷新</el-button>
+      <el-button :loading="loading" @click="refreshAll">刷新</el-button>
     </el-card>
 
     <el-empty
@@ -410,6 +447,68 @@ function fmtRate(v?: number | null) {
           </el-table-column>
         </el-table>
       </el-card>
+
+      <el-card v-if="insights || insightsLoading || insightsError" v-loading="insightsLoading" shadow="never" class="p-card">
+        <template #header>
+          <div class="top-header">
+            <span>爆款洞察</span>
+            <span v-if="insights" class="insight-sample">样本 {{ insights.sample_size }} 条</span>
+          </div>
+        </template>
+        <el-alert
+          v-if="insightsError"
+          type="error"
+          :title="insightsError"
+          :closable="false"
+          style="margin-bottom: 12px"
+        />
+        <el-empty
+          v-if="!insightsLoading && insights?.insufficient_sample"
+          description="样本不足，至少需要 5 条可评分视频"
+        />
+        <el-row v-if="insights && !insights.insufficient_sample" :gutter="16">
+          <el-col :span="12">
+            <div class="insight-title">潜力爆款</div>
+            <el-table :data="insights.top" size="small" max-height="420">
+              <el-table-column prop="video_title" label="标题" show-overflow-tooltip />
+              <el-table-column label="发布天数" width="90">
+                <template #default="{ row }">{{ row.days_since_publish }}</template>
+              </el-table-column>
+              <el-table-column label="播放" width="90">
+                <template #default="{ row }">{{ fmtNum(row.play_count) }}</template>
+              </el-table-column>
+              <el-table-column label="互动率" width="90">
+                <template #default="{ row }">{{ fmtRate(row.engage_rate) }}</template>
+              </el-table-column>
+              <el-table-column label="收藏率" width="90">
+                <template #default="{ row }">{{ fmtRate(row.collect_rate) }}</template>
+              </el-table-column>
+              <el-table-column prop="score" label="综合分" width="80" />
+              <el-table-column prop="explanation" label="解释" show-overflow-tooltip />
+            </el-table>
+          </el-col>
+          <el-col :span="12">
+            <div class="insight-title">异常偏低</div>
+            <el-table :data="insights.bottom" size="small" max-height="420">
+              <el-table-column prop="video_title" label="标题" show-overflow-tooltip />
+              <el-table-column label="发布天数" width="90">
+                <template #default="{ row }">{{ row.days_since_publish }}</template>
+              </el-table-column>
+              <el-table-column label="播放" width="90">
+                <template #default="{ row }">{{ fmtNum(row.play_count) }}</template>
+              </el-table-column>
+              <el-table-column label="互动率" width="90">
+                <template #default="{ row }">{{ fmtRate(row.engage_rate) }}</template>
+              </el-table-column>
+              <el-table-column label="收藏率" width="90">
+                <template #default="{ row }">{{ fmtRate(row.collect_rate) }}</template>
+              </el-table-column>
+              <el-table-column prop="score" label="综合分" width="80" />
+              <el-table-column prop="explanation" label="解释" show-overflow-tooltip />
+            </el-table>
+          </el-col>
+        </el-row>
+      </el-card>
     </template>
   </div>
 </template>
@@ -449,6 +548,15 @@ function fmtRate(v?: number | null) {
 .c-missing {
   width: 76px;
   text-align: right;
+  color: var(--spider-text-secondary);
+  font-size: 12px;
+}
+.insight-title {
+  margin: 4px 0 8px;
+  font-weight: 600;
+  color: var(--spider-text);
+}
+.insight-sample {
   color: var(--spider-text-secondary);
   font-size: 12px;
 }

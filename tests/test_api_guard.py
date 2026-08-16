@@ -82,24 +82,6 @@ def test_read_guard_fail_closed_when_token_unconfigured(monkeypatch):
 
 # ── 路由接线：所有 GET /api/* 都挂 read guard，静态/根路由不挂 ──
 
-READ_GUARDED_PATHS = [
-    '/api/videos',
-    '/api/videos/{video_id}',
-    '/api/stats',
-    '/api/stats/authors',
-    '/api/queue/length',
-    '/api/queue/items',
-    '/api/spider/status',
-    '/api/spider/log',
-    '/api/quality/report',
-    '/api/quality/export',
-    '/api/extension/ids',
-    '/api/analyze/authors',
-    '/api/analyze/personal',
-    '/api/export',
-    '/api/cleanup/status',
-]
-
 NOT_GUARDED_PATHS = ['/app', '/app/{full_path:path}', '/']
 
 
@@ -120,7 +102,14 @@ def _route_dependency_calls(path, methods=None):
 
 
 def test_all_get_api_routes_carry_read_guard():
-    for path in READ_GUARDED_PATHS:
+    api_get_routes = [
+        route for route in api.app.routes
+        if getattr(route, 'path', '').startswith('/api')
+        and (getattr(route, 'methods', None) or set()) & {'GET'}
+    ]
+    assert api_get_routes, '未找到任何 GET /api 路由'
+    for route in api_get_routes:
+        path = route.path
         calls = _route_dependency_calls(path, methods={'GET'})
         assert calls is not None, f'路由未注册: {path}'
         assert api.verify_read_guard in calls, f'{path} 缺少 verify_read_guard 依赖'

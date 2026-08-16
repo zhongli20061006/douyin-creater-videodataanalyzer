@@ -20,6 +20,7 @@
     爬虫/队列/Playwright 不参与此链路；
   - 看板新增「个人分析」页：作者下拉、概览卡（含最近同步时间）、发布趋势、
     互动总量、Top 10 视频。
+  - 「爆款洞察」：按发布天数分桶 + 播放/互动/收藏百分位评分，自动标记潜力爆款与异常偏低视频；
 
 ## 技术栈
 
@@ -130,7 +131,7 @@ npm run build              # 生产构建，由后端在 /app 提供服务
 - 扩展写接口（`/api/extension/*`、爬虫/队列控制、质量修复/删除、删除视频）鉴权规则：
   Origin 在本机白名单（127.0.0.1/localhost:8001、localhost:5173）或请求头 `X-API-Token` 匹配 `local_config.py` 的 `EXTENSION_API_TOKEN`；
 - 令牌未配置时扩展上报一律拒绝（fail-closed，返回 503 并提示）；扩展选项页需填写同一令牌；
-- 已知边界：读接口不校验令牌，靠 CORS 白名单兜底；令牌以明文存于本机 `local_config.py` 与浏览器存储，请勿外传。
+- 只读接口同样走 `verify_read_guard`（Origin 白名单或 `X-API-Token`，fail-closed）；令牌以明文存于本机 `local_config.py` 与浏览器存储，请勿外传。
 
 ### video_ids.txt 同步状态
 - 每行格式 `video_id|pending` 或 `video_id|done`（纯 id 行视为 pending，向后兼容）；
